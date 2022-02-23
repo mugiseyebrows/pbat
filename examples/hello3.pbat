@@ -1,0 +1,8 @@
+
+def foo
+    echo this is foo
+    
+def main
+    echo this is main
+
+order main foo
