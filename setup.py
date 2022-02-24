@@ -17,7 +17,8 @@ setup(
     entry_points={
         'console_scripts': [
             'pbat = pbat.compile:main',
-            'pbat-watch = pbat.watch:main'
+            'pbat.compile = pbat.compile:main',
+            'pbat.watch = pbat.watch:main'
         ]
     }
 )

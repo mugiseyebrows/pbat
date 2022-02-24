@@ -40,5 +40,5 @@ python -m pbat.watch examples
 ```
 or
 ```cmd
-pbat-watch examples
+pbat.watch examples
 ```
