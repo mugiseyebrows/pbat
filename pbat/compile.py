@@ -3,11 +3,18 @@ import argparse
 import glob
 from . import read_compile_write
 
-
+def find_pbats(path):
+    paths = []
+    for n in os.listdir(path):
+        if os.path.splitext(n)[1] != '.pbat':
+            continue
+        p = os.path.join(path, n)
+        paths.append(p)
+    return paths
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs='+', help='file, directory or glob')
+    parser.add_argument("path", nargs='*', help='file, directory or glob')
     parser.add_argument('-o', '--output')
     args = parser.parse_args()
     paths = []
@@ -17,13 +24,12 @@ def main():
                 paths.append(path_)
         else:
             if os.path.isdir(path):
-                for n in os.listdir(path):
-                    if os.path.splitext(n)[1] != '.pbat':
-                        continue
-                    p = os.path.join(path, n)
-                    paths.append(p)
+                paths += find_pbats(path)
             else:
                 paths.append(path)
+
+    if len(args.path) == 0:
+        paths = find_pbats('.')
 
     if len(paths) > 1 and args.output is not None:
         print("--output argument requires one input")
