@@ -6,7 +6,7 @@ import random
 import textwrap
 import glob
 
-MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone']
+MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'set_path']
 
 class Data:
     def __init__(self) -> None:
@@ -496,6 +496,9 @@ def macro_git_clone(name, args):
     popd
     )
     """).format(basename, url, basename, branch)
+
+def macro_set_path(name, args):
+    return "set PATH=" + ";".join(args)
 
 def expand_macros(defs, thens, checksums):
 
