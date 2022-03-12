@@ -498,7 +498,7 @@ def macro_git_clone(name, args):
     """).format(basename, url, basename, branch)
 
 def macro_set_path(name, args):
-    return "set PATH=" + ";".join(args)
+    return "set PATH=" + ";".join(args) + "\n"
 
 def expand_macros(defs, thens, checksums):
 
