@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import enum
 import os
 import re
@@ -6,7 +7,8 @@ import random
 import textwrap
 import glob
 
-MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'set_path']
+MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 
+'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'set_path', 'copy_dir']
 
 class Data:
     def __init__(self) -> None:
@@ -48,6 +50,15 @@ class Data:
 
     def char(self, c):
         self.arg += c
+
+@dataclass
+class Opts:
+    debug: bool = False
+    clean: bool = False
+    curl_in_path: bool = False
+    download_test: bool = True
+    unzip_test: bool = True
+    zip_test: bool = True
 
 def parse_args(s):
     data = Data()
@@ -98,10 +109,7 @@ def read(src):
     deps = dict()
 
     thens = dict()
-    opts = {
-        'debug': False,
-        'clean': False,
-    }
+    opts = Opts
 
     lines = []
 
@@ -149,9 +157,9 @@ def read(src):
     name = None
     for i, line in enumerate(lines):
         line = line.strip()
-        m = re.match('^(debug|clean)\\s+(off|on)$', line)
+        m = re.match('^(debug|clean|curl_in_path|download_test|unzip_test|zip_test)\\s+(off|on|true|false|1|0)$', line)
         if m is not None:
-            opts[m.group(1)] = m.group(2) == 'on'
+            setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
             continue
         
         m = re.match('^def\\s+([a-z0-9_]+)\\s*(then\\s*[a-z0-9_]+)?\\s*(depends\\s*on\\s*[a-z0-9_ ]+)?', line)
@@ -256,9 +264,9 @@ def find_file(name, items, label):
 def without(vs, v):
     return [e for e in vs if e != v]
 
-def render(defs, thens, opts, src_name):
+def render(defs, thens, opts: Opts, src_name):
     res = []
-    debug = opts['debug']
+    debug = opts.debug
     if not debug:
         res = res + ['@echo off\n']
     res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
@@ -269,7 +277,7 @@ def render(defs, thens, opts, src_name):
 
     keys = ['main'] + without(defs.keys(), 'main')
 
-    if not opts['clean']:
+    if not opts.clean:
         keys = without(keys, 'clean')
 
     for name in keys:
@@ -352,7 +360,7 @@ def remove_redundant_gotos(res):
 
     return changed
 
-def macro_find_app(name, args):
+def macro_find_app(name, args, opts):
     #print(args)
     return macro_find_app3(name, args)
     """
@@ -367,7 +375,7 @@ def macro_find_app(name, args):
     return test + "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_append + "\n" + "".join(puts) + ":" + label_success + "\n"
     """
 
-def macro_find_app2(name, args):
+def macro_find_app2(name, args, opts):
     env_name = args[0]
     app = args[1]
     items = args[2]
@@ -390,7 +398,7 @@ def macro_find_app2(name, args):
 
     return test0 + "".join(tests) + "goto {}_begin\n".format(label) + found0 + "".join(founds) + ":{}\n".format(label_success)
 
-def macro_find_app3(name, args):
+def macro_find_app3(name, args, opts):
     env_name = args[0]
     items = args[1]
     label = args[2]
@@ -398,7 +406,7 @@ def macro_find_app3(name, args):
     tests = tests + ['if not defined {} goto {}_begin\n'.format(env_name, label)]
     return "".join(tests)
 
-def macro_find_file(name, args):
+def macro_find_file(name, args, opts):
     items = args[0]
     label = args[1]
     label_success = "{}_find_file_found".format(name)
@@ -406,22 +414,35 @@ def macro_find_file(name, args):
     puts = []
     return "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_success + "\n" + "".join(puts)
 
-def macro_download(name, args):
+def quoted(s):
+    if ' ' in s or '%' in s:
+        return '"' + s + '"'
+    return s
+
+def macro_download(name, args, opts: Opts):
     url = args[0]
     dest = args[1]
     force = "force" in args
     keep = "keep" in args
-    if force:
-        exp = "\"%CURL%\" -L -o {} {}\n".format(dest, url)
+    if opts.curl_in_path:
+        curl = "curl"
     else:
-        exp = "if not exist \"{}\" \"%CURL%\" -L -o \"{}\" {}\n".format(dest, dest, url)
+        curl = '"%CURL%"'
+
+    test = "if not exist {}".format(quoted(dest))
+    cmd = "{} -L -o {} {}\n".format(curl, quoted(dest), url)
+
+    if force or opts.download_test == False:
+        exp = cmd
+    else:
+        exp = test + " " + cmd
     if keep:
         clean_exp = ""
     else:
-        clean_exp = macro_clean_file(None, [dest])
+        clean_exp = macro_clean_file(None, [dest], opts)
     return exp, clean_exp
 
-def macro_download2(name, args, checksums):
+def macro_download2(name, args, opts, checksums):
     url = args[0]
     dest = args[1]
     keep = "keep" in args
@@ -431,7 +452,7 @@ def macro_download2(name, args, checksums):
     if keep:
         clean_exp = ""
     else:
-        clean_exp = macro_clean_file(None, [dest])
+        clean_exp = macro_clean_file(None, [dest], opts)
     exp = """if not exist \"{}\" (
 \"%CURL%\" -L -o \"{}\" {}
 call :verify_checksum_sha1 \"{}\" {}
@@ -440,17 +461,17 @@ if errorlevel 1 exit /b 1
 """.format(dest, dest, url, dest, checksums[dest], dest)
     return exp, clean_exp
 
-def macro_unzip(name, args):
+def macro_unzip(name, args, opts: Opts):
     src = args[0]
     test = args[1] if len(args) > 1 and args[1] != 'keep' else None
     force = "force" in args
     keep = "keep" in args
-    if force:
-        exp = "7z x -y \"{}\"\n".format(src)
+    if force or opts.unzip_test == False:
+        exp = "7z x -y {}\n".format(quoted(src))
     elif test is not None:
-        exp = "if not exist \"{}\" 7z x -y \"{}\"\n".format(test, src)
+        exp = "if not exist {} 7z x -y {}\n".format(quoted(test), quoted(src))
     else:
-        exp = "7z x -y \"{}\"\n".format(src)
+        exp = "7z x -y {}\n".format(quoted(src))
     if keep:
         clean_exp = ""
     else:
@@ -459,33 +480,38 @@ def macro_unzip(name, args):
         guess_dest = os.path.splitext(src)[0]
         is_file = os.path.splitext(guess_dest)[1] in ['.tar', '.lzma', '.gz', '.zip']
         if is_file:
-            clean_exp = macro_clean_file(None, [guess_dest])
+            clean_exp = macro_clean_file(None, [guess_dest], opts)
         else:
             #clean_exp = "if exist \"{}\" ".format(guess_dest) + macro_clean_dir(None, [guess_dest])
-            clean_exp = macro_clean_dir(None, [guess_dest])
+            clean_exp = macro_clean_dir(None, [guess_dest], opts)
     return exp, clean_exp
 
-def macro_zip(name, args):
+def macro_zip(name, args, opts: Opts):
     src, dst = args
-    return "if not exist \"{}\" 7z a -y \"{}\" \"{}\"\n".format(dst, dst, src)
+    cmd = "7z a -y {} {}\n".format(quoted(dst), quoted(src))
+    test = "if not exist {}".format(quoted(dst))
+    if opts.zip_test:
+        return test + ' ' + cmd
+    else:
+        return cmd
 
-def macro_mkdir(name, args):
+def macro_mkdir(name, args, opts):
     arg = args[0]
     return "if not exist \"{}\" mkdir \"{}\"\n".format(arg, arg)
 
-def macro_log(name, args):
+def macro_log(name, args, opts):
     arg = args[0]
     return "echo %DATE% %TIME% {} >> %~dp0log.txt\n".format(arg)
 
-def macro_clean_dir(name, args):
+def macro_clean_dir(name, args, opts):
     arg = args[0]
     return "rmdir /s /q \"{}\"\n".format(arg)
 
-def macro_clean_file(name, args):
+def macro_clean_file(name, args, opts):
     arg = args[0]
     return "del /q \"{}\"\n".format(arg)
 
-def macro_git_clone(name, args):
+def macro_git_clone(name, args, opts):
     url, branch = args
     basename = os.path.splitext(os.path.basename(url))[0]
     return textwrap.dedent("""\
@@ -497,10 +523,14 @@ def macro_git_clone(name, args):
     )
     """).format(basename, url, basename, branch)
 
-def macro_set_path(name, args):
+def macro_set_path(name, args, opts):
     return "set PATH=" + ";".join(args) + "\n"
 
-def expand_macros(defs, thens, checksums):
+def macro_copy_dir(name, args, opts):
+    src, dst = args
+    return "xcopy /s /q /y /i {} {}\n".format(quoted(src), quoted(dst))
+
+def expand_macros(defs, thens, opts, checksums):
 
     if 'clean' not in defs:
         defs['clean'] = []
@@ -513,13 +543,13 @@ def expand_macros(defs, thens, checksums):
                     args = parse_args(m.group(1))
                     
                     if n in ['download', 'unzip']:
-                        exp, clean_exp = globals()['macro_' + n](name, args)
+                        exp, clean_exp = globals()['macro_' + n](name, args, opts)
                         defs['clean'].append(clean_exp)
                     elif n == 'download2':
                         exp, clean_exp = globals()['macro_' + n](name, args, checksums)
                         defs['clean'].append(clean_exp)
                     else:
-                        exp = globals()['macro_' + n](name, args)
+                        exp = globals()['macro_' + n](name, args, opts)
 
                     if n in ['clean_dir', 'clean_file']:
                         defs[name][i] = ""
@@ -579,7 +609,7 @@ def read_compile_write(src, dst, verbose=True):
     src_name = os.path.basename(src)
     defs, thens, opts = read(src)
     checksums = read_checksums(src)
-    expand_macros(defs, thens, checksums)
+    expand_macros(defs, thens, opts, checksums)
     append_verify_checksum(defs, thens)
     if verbose:
         print("{} -> {}".format(src, dst))
