@@ -362,7 +362,7 @@ def remove_redundant_gotos(res):
 
 def macro_find_app(name, args, opts):
     #print(args)
-    return macro_find_app3(name, args)
+    return macro_find_app3(name, args, opts)
     """
     app = args[0]
     items = args[1]
