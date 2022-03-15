@@ -8,7 +8,7 @@ import textwrap
 import glob
 
 MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 
-'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'set_path', 'copy_dir']
+'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'copy_dir']
 
 class Data:
     def __init__(self) -> None:
@@ -522,6 +522,14 @@ def macro_git_clone(name, args, opts):
     popd
     )
     """).format(basename, url, basename, branch)
+
+def macro_git_pull(name, args, opts):
+    base = args[0]
+    return textwrap.dedent("""\
+    pushd {}
+    git pull
+    popd
+    """).format(base)
 
 def macro_set_path(name, args, opts):
     return "set PATH=" + ";".join(args) + "\n"
