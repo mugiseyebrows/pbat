@@ -56,6 +56,8 @@ class Opts:
     debug: bool = False
     clean: bool = False
     curl_in_path: bool = False
+    curl_user_agent: str = None
+    curl_proxy: str = None
     download_test: bool = True
     unzip_test: bool = True
     zip_test: bool = True
@@ -160,6 +162,15 @@ def read(src):
         m = re.match('^(debug|clean|curl_in_path|download_test|unzip_test|zip_test)\\s+(off|on|true|false|1|0)$', line)
         if m is not None:
             setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
+            continue
+
+        m = re.match('^curl_user_agent\\s+(safari|chrome|mozilla)$', line)
+        if m is not None:
+            opts.curl_user_agent = m.group(1)
+            continue
+        m = re.search('^curl_proxy\\s+(.*)$', line)
+        if m is not None:
+            opts.curl_proxy = m.group(1).rstrip()
             continue
         
         m = re.match('^def\\s+([a-z0-9_]+)\\s*(then\\s*[a-z0-9_]+)?\\s*(depends\\s*on\\s*[a-z0-9_ ]+)?', line)
@@ -419,6 +430,9 @@ def quoted(s):
         return '"' + s + '"'
     return s
 
+def escape_url(s):
+    return quoted("".join(["^" + c if c == '%' else c for c in s]))
+
 def macro_download(name, args, opts: Opts):
     url = args[0]
     dest = args[1]
@@ -429,8 +443,32 @@ def macro_download(name, args, opts: Opts):
     else:
         curl = '"%CURL%"'
 
+    #print("opts.curl_user_agent", opts.curl_user_agent)
+
+    user_agent = ""
+    if opts.curl_user_agent is not None:
+        user_agent = '--user-agent "' + {
+            'mozilla': 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'safari': 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+            'chrome': 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36'
+        }[opts.curl_user_agent] + '"'
+
+    proxy = ''
+    if opts.curl_proxy is not None:
+        proxy = '-x {}'.format(opts.curl_proxy)
+
+    #print("user_agent", user_agent)
+
+    is_wget = False
+    is_curl = True
+
     test = "if not exist {}".format(quoted(dest))
-    cmd = "{} -L -o {} {}\n".format(curl, quoted(dest), url)
+
+    if is_curl:
+        cmd = " ".join([e for e in [curl,'-L', proxy, user_agent,'-o',quoted(dest), quoted(url)] if e != ""]) + "\n"
+    elif is_wget:
+        wget = "C:\\msys64\\usr\\bin\\wget.exe"
+        cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
 
     if force or opts.download_test == False:
         exp = cmd
