@@ -111,7 +111,7 @@ def read(src):
     deps = dict()
 
     thens = dict()
-    opts = Opts
+    opts = Opts()
 
     lines = []
 
