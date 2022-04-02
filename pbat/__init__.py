@@ -116,17 +116,34 @@ def read(src):
 
     lines = []
 
-    with open(src, encoding='utf-8') as f:
-        for i, line in enumerate(f):
-            m = re.match('^include\\s+(.*[.]pbat)$', line)
-            if m is not None:
-                
-                path = os.path.join(os.path.dirname(src), m.group(1))
-                #print("including {}".format(path))
-                with open(path, encoding='utf-8') as f_:
-                    lines += f_.readlines()
-            else:
-                lines.append(line)
+    def process_line(line, cwd):
+        m = re.match('^include\\s+(.*[.]pbat)$', line)
+        if m is not None:
+            path = os.path.join(cwd, m.group(1))
+            with open(path, encoding='utf-8') as f_:
+                for line in f_.readlines():
+                    lines.append(line)
+        else:
+            lines.append(line)
+
+    if isinstance(src, str):
+        cwd = os.path.dirname(src)
+        with open(src, encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                process_line(line, cwd)
+    else:
+        # StringIO
+        cwd = os.getcwd()
+        for line in src:
+            process_line(line, cwd)
+
+    has_main = False
+    for line in lines:
+        if re.match('^def main', line):
+            has_main = True
+            break
+    if not has_main:
+        lines = ['def main\n'] + lines
 
     lines_ = []
 
@@ -276,12 +293,13 @@ def find_file(name, items, label):
 def without(vs, v):
     return [e for e in vs if e != v]
 
-def render(defs, thens, opts: Opts, src_name):
+def render(defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
-    debug = opts.debug
-    if not debug:
+    if not opts.debug and echo_off:
         res = res + ['@echo off\n']
-    res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
+
+    if warning:
+        res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
 
     if 'main' not in defs:
         print("main not defined")
@@ -296,7 +314,7 @@ def render(defs, thens, opts: Opts, src_name):
         lines = defs[name]
         #res.append("rem def {}\n".format(name))
         res.append(":{}_begin\n".format(name))
-        if debug:
+        if opts.debug:
             res.append("echo {}\n".format(name))
             res.append(macro_log(name, [name]))
         res.append("".join(lines))
@@ -608,9 +626,13 @@ def expand_macros(defs, thens, opts, checksums):
                     continue
     defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
 
-def write(path, defs, thens, opts, src_name):
-    with open(path, 'w', encoding='cp866') as f:
-        f.write(render(defs, thens, opts, src_name))
+def write(path, defs, thens, opts, src_name, echo_off, warning):
+    if isinstance(path, str):
+        with open(path, 'w', encoding='cp866') as f:
+            f.write(render(defs, thens, opts, src_name, echo_off, warning))
+    else:
+        # StringIO
+        path.write(render(defs, thens, opts, src_name, echo_off, warning))
 
 used_ids = set()
 
@@ -639,7 +661,10 @@ exit /b 1
     defs['verify_checksum_sha1'] = exp
 
 def read_checksums(path):
-    base = os.path.dirname(path)
+    if isinstance(path, str):
+        base = os.path.dirname(path)
+    else:
+        base = os.getcwd()
     checksums = dict()
     path = os.path.join(base, "sha1sum.txt")
     if not os.path.exists(path):
@@ -654,12 +679,15 @@ def read_checksums(path):
         print(e)
     return checksums
 
-def read_compile_write(src, dst, verbose=True):
-    src_name = os.path.basename(src)
+def read_compile_write(src, dst, verbose=True, echo_off=True, warning=True):
+    if isinstance(src, str):
+        src_name = os.path.basename(src)
+    else:
+        src_name = 'untitled'
     defs, thens, opts = read(src)
     checksums = read_checksums(src)
     expand_macros(defs, thens, opts, checksums)
     append_verify_checksum(defs, thens)
-    if verbose:
+    if verbose and isinstance(src, str) and isinstance(dst, str):
         print("{} -> {}".format(src, dst))
-    write(dst, defs, thens, opts, src_name)
+    write(dst, defs, thens, opts, src_name, echo_off, warning)
