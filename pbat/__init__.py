@@ -61,6 +61,7 @@ class Opts:
     download_test: bool = True
     unzip_test: bool = True
     zip_test: bool = True
+    github: bool = False
 
 def parse_args(s):
     data = Data()
@@ -159,7 +160,7 @@ def read(src):
     name = None
     for i, line in enumerate(lines):
         line = line.strip()
-        m = re.match('^(debug|clean|curl_in_path|download_test|unzip_test|zip_test)\\s+(off|on|true|false|1|0)$', line)
+        m = re.match('^(debug|clean|curl_in_path|download_test|unzip_test|zip_test|github)\\s+(off|on|true|false|1|0)$', line)
         if m is not None:
             setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
             continue
@@ -570,6 +571,8 @@ def macro_git_pull(name, args, opts):
     """).format(base)
 
 def macro_set_path(name, args, opts):
+    if opts.github:
+        return "echo PATH={}>> %GITHUB_ENV%\n".format(";".join(args))
     return "set PATH=" + ";".join(args) + "\n"
 
 def macro_copy_dir(name, args, opts):
