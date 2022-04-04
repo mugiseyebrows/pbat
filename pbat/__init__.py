@@ -8,7 +8,7 @@ import textwrap
 import glob
 
 MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 
-'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'copy_dir']
+'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var', 'copy_dir']
 
 class Data:
     def __init__(self) -> None:
@@ -592,6 +592,13 @@ def macro_set_path(name, args, opts):
     if opts.github:
         return "echo PATH={}>> %GITHUB_ENV%\n".format(";".join(args))
     return "set PATH=" + ";".join(args) + "\n"
+
+def macro_set_var(name, args, opts):
+    n, v = args
+    if opts.github:
+        return "echo {}={}>> %GITHUB_ENV%\n".format(n,v)
+    else:
+        return "set {}={}\n".format(n,v)
 
 def macro_copy_dir(name, args, opts):
     src, dst = args
