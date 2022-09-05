@@ -5,7 +5,7 @@ import os
 import datetime
 import subprocess
 import glob
-from . import read_compile_write
+from . import read_compile_write, get_dst_bat, get_dst_workflow
 
 try:
     from eventloop import on_file_changed, EventLoop
@@ -73,10 +73,12 @@ def main():
         if ext != '.pbat':
             return
         src = file_path
-        dst = os.path.join(base, os.path.splitext(name)[0] + ".bat")
         try:
-            read_compile_write(src, dst, verbose=False)
-            logger.print_compiled(file_path, dst)
+            dst_bat = get_dst_bat(src)
+            dst_workflow = get_dst_workflow(src)
+            read_compile_write(src, dst_bat, dst_workflow, verbose=False)
+            logger.print_compiled(file_path, dst_bat)
+            logger.print_compiled(file_path, dst_workflow)
         except Exception as e:
             logger.print_error(str(e))
 

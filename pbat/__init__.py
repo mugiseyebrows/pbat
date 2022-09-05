@@ -13,6 +13,16 @@ ON_TAG = 2
 WINDOWS_2019 = "windows-2019"
 WINDOWS_2022 = "windows-2022"
 
+def get_dst_bat(src):
+    dirname = os.path.dirname(src)
+    basename = os.path.splitext(os.path.basename(src))[0]
+    return os.path.join(dirname, basename + '.bat')
+
+def get_dst_workflow(src):
+    dirname = os.path.dirname(src)
+    basename = os.path.splitext(os.path.basename(src))[0]
+    return os.path.join(dirname, ".github", "workflows", basename + '.yml')
+
 class folded_str(str): pass
 class literal_str(str): pass
 def folded_str_representer(dumper, data):

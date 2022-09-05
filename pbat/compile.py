@@ -1,7 +1,7 @@
 import os
 import argparse
 import glob
-from . import read_compile_write
+from . import read_compile_write, get_dst_bat, get_dst_workflow
 
 def find_pbats(path):
     paths = []
@@ -37,16 +37,12 @@ def main():
         exit(1)
     """
 
-    for path in paths:
-        src = path
+    for src in paths:
         if False:
             pass
         else:
-            dirname = os.path.dirname(path)
-
-            basename = os.path.splitext(os.path.basename(path))[0]
-            dst_bat = os.path.join(dirname, basename + '.bat')
-            dst_workflow = os.path.join(dirname, ".github", "workflows", basename + '.yml')
+            dst_bat = get_dst_bat(src)
+            dst_workflow = get_dst_workflow(src)
         if src == dst_bat:
             print("src == dst", src)
             exit(1)
