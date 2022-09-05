@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import enum
 import os
 import re
@@ -6,9 +6,56 @@ import argparse
 import random
 import textwrap
 import glob
+import yaml
+
+ON_PUSH = 1
+ON_TAG = 2
+WINDOWS_2019 = "windows-2019"
+WINDOWS_2022 = "windows-2022"
+
+class folded_str(str): pass
+class literal_str(str): pass
+def folded_str_representer(dumper, data):
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='>')
+def literal_str_representer(dumper, data):
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+yaml.add_representer(folded_str, folded_str_representer)
+yaml.add_representer(literal_str, literal_str_representer)
+
+def make_release_step(artifacts):
+    return {
+        "name": "release",
+        "uses": "ncipollo/release-action@v1",
+        "if": "startsWith(github.ref, 'refs/tags/')",
+        "with": {
+            "artifacts": literal_str("\n".join(artifacts) + "\n"),
+            "token": "${{ secrets.GITHUB_TOKEN }}"
+        }
+    }
+
+def make_upload_step(name, artifacts):
+    return {
+        "name": "upload",
+        "uses": "actions/upload-artifact@v3",
+        "with": {
+            "name": name,
+            "path": literal_str("\n".join(artifacts) + "\n")
+        }
+    }
+
+def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if on == ON_TAG:
+        on_ = {"push":{"tags":"*"}}
+    else:
+        on_ = "push"
+    data = {"name":"main","on":on_,"jobs":{"main": {"runs-on":runs_on,"steps":steps}}}
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
 MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 
-'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var', 'copy_dir']
+'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var', 
+'copy_dir', 'use_tool', 'install_tool', 'call_vcvars', 'github_checkout', 'github_release', 'github_upload']
 
 class Data:
     def __init__(self) -> None:
@@ -62,6 +109,12 @@ class Opts:
     unzip_test: bool = True
     zip_test: bool = True
     github: bool = False
+
+@dataclass
+class GitHubData:
+    checkout: bool = False
+    release: list = field(default_factory=list)
+    upload: list = field(default_factory=list)
 
 def parse_args(s):
     data = Data()
@@ -604,7 +657,50 @@ def macro_copy_dir(name, args, opts):
     src, dst = args
     return "xcopy /s /q /y /i {} {}\n".format(quoted(src), quoted(dst))
 
-def expand_macros(defs, thens, opts, checksums):
+def macro_use_tool(name, args, opts):
+    #print("opts", opts)
+    paths = set()
+    for n in args:
+        if n == 'xz':
+            paths.add('C:\\Program Files\\Git\\usr\\bin')
+        elif n == 'tar':
+            paths.add('C:\\Program Files\\Git\\mingw64\\bin')
+        elif n == 'ninja':
+            if opts.github:
+                pass
+            else:
+                paths.add('C:\\Ninja')
+
+    if len(paths) > 0:
+        return "set PATH=" + ";".join(list(paths) + ['%PATH%']) + "\n"
+    return ""
+
+def macro_install_tool(name, args, opts):
+    return ''
+
+def macro_call_vcvars(name, args, opts: Opts):
+    if opts.github:
+        return 'call "{}"\n'.format('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat')
+    else:
+        return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
+
+def macro_untar(name, args, opts):
+    print(args)
+    return ''
+
+def macro_github_release(name, args, opts, githubdata: GitHubData):
+    githubdata.release = args
+    return ''
+
+def macro_github_checkout(name, args, opts, githubdata: GitHubData):
+    githubdata.checkout = True
+    return ''
+
+def macro_github_upload(name, args, opts, githubdata: GitHubData):
+    githubdata.upload = args
+    return ''
+
+def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
 
     if 'clean' not in defs:
         defs['clean'] = []
@@ -615,8 +711,9 @@ def expand_macros(defs, thens, opts, checksums):
                 m = re.match('^' + n + '\\s*\((.*)\)$', line)
                 if m is not None:
                     args = parse_args(m.group(1))
-                    
-                    if n in ['download', 'unzip']:
+                    if n.split("_")[0] == 'github':
+                        exp = globals()['macro_' + n](name, args, opts, githubdata)
+                    elif n in ['download', 'unzip']:
                         exp, clean_exp = globals()['macro_' + n](name, args, opts)
                         defs['clean'].append(clean_exp)
                     elif n == 'download2':
@@ -634,12 +731,13 @@ def expand_macros(defs, thens, opts, checksums):
     defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
 
 def write(path, defs, thens, opts, src_name, echo_off, warning):
+    text = render(defs, thens, opts, src_name, echo_off, warning)
     if isinstance(path, str):
         with open(path, 'w', encoding='cp866') as f:
-            f.write(render(defs, thens, opts, src_name, echo_off, warning))
+            f.write(text)
     else:
         # StringIO
-        path.write(render(defs, thens, opts, src_name, echo_off, warning))
+        path.write(text)
 
 used_ids = set()
 
@@ -686,15 +784,64 @@ def read_checksums(path):
         print(e)
     return checksums
 
-def read_compile_write(src, dst, verbose=True, echo_off=True, warning=True):
+
+class Dumper(yaml.Dumper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # disable resolving on as tag:yaml.org,2002:bool (disable single quoting)
+        cls = self.__class__
+        cls.yaml_implicit_resolvers['o'] = []
+
+
+def pack_step(cmds, name, local):
+    if local:
+        return "rem {}\n".format(name) + "\n".join(cmds) + "\n"
+    else:
+        return {
+            "name": name, 
+            "shell": "cmd", 
+            "run": literal_str("\n".join(cmds) + "\n")
+        }
+
+def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
+
+    #print("dst_workflow", dst_workflow)
+    os.makedirs(os.path.dirname(dst_workflow), exist_ok=True)
+
     if isinstance(src, str):
         src_name = os.path.basename(src)
     else:
         src_name = 'untitled'
-    defs, thens, opts = read(src)
-    checksums = read_checksums(src)
-    expand_macros(defs, thens, opts, checksums)
-    append_verify_checksum(defs, thens)
-    if verbose and isinstance(src, str) and isinstance(dst, str):
-        print("{} -> {}".format(src, dst))
-    write(dst, defs, thens, opts, src_name, echo_off, warning)
+
+    for github in [False, True]:
+        githubdata = GitHubData()
+        defs, thens, opts = read(src)
+        checksums = read_checksums(src)
+        opts.github = github
+        release = []
+        expand_macros(defs, thens, opts, checksums, githubdata)
+        append_verify_checksum(defs, thens)
+            
+        if github:
+            if verbose and isinstance(src, str) and isinstance(dst_workflow, str):
+                print("{} -> {}".format(src, dst_workflow))
+            text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
+            build_step = pack_step(text, os.path.splitext(src_name)[0], local=False)
+            steps = []
+            if githubdata.checkout:
+                steps.append({"uses": "actions/checkout@v3", "name": "checkout"})
+            steps.append(build_step)
+            if len(githubdata.upload) > 0:
+                name = githubdata.upload[0]
+                artifacts = githubdata.upload[1:]
+                steps.append(make_upload_step(name, artifacts))
+            if len(githubdata.release) > 0:
+                steps.append(make_release_step(githubdata.release))
+            save_workflow(dst_workflow, steps, ON_PUSH, WINDOWS_2022)
+        else:
+            if verbose and isinstance(src, str) and isinstance(dst_bat, str):
+                print("{} -> {}".format(src, dst_bat))
+            write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
+
+    #print("dst_bat", dst_bat)
+    #print("dst_workflow", dst_workflow)

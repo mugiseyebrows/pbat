@@ -15,7 +15,7 @@ def find_pbats(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs='*', help='file, directory or glob')
-    parser.add_argument('-o', '--output')
+
     args = parser.parse_args()
     paths = []
     for path in args.path:
@@ -31,24 +31,29 @@ def main():
     if len(args.path) == 0:
         paths = find_pbats('.')
 
+    """
     if len(paths) > 1 and args.output is not None:
         print("--output argument requires one input")
         exit(1)
+    """
 
     for path in paths:
         src = path
-        if args.output is not None:
-            dst = args.output
+        if False:
+            pass
         else:
             dirname = os.path.dirname(path)
+
             basename = os.path.splitext(os.path.basename(path))[0]
-            dst = os.path.join(dirname, basename + '.bat')
-        if src == dst:
+            dst_bat = os.path.join(dirname, basename + '.bat')
+            dst_workflow = os.path.join(dirname, ".github", "workflows", basename + '.yml')
+        if src == dst_bat:
             print("src == dst", src)
             exit(1)
 
         try:
-            read_compile_write(src, dst)
+            #print(src, dst_bat, dst_workflow)
+            read_compile_write(src, dst_bat, dst_workflow)
         except Exception as e:
             print(e)
 
