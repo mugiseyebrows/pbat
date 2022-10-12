@@ -68,7 +68,7 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
-MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'log', 
+MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'rmdir', 'log', 
 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var', 
 'copy_dir', 'use_tool', 'install_tool', 'call_vcvars', 'github_checkout', 'github_release', 'github_upload']
 
@@ -631,6 +631,9 @@ def macro_log(name, args, opts):
 def macro_clean_dir(name, args, opts):
     arg = args[0]
     return "rmdir /s /q \"{}\"\n".format(arg)
+
+def macro_rmdir(name, args, opts):
+    return macro_clean_dir(name, args, opts)
 
 def macro_clean_file(name, args, opts):
     arg = args[0]
