@@ -68,7 +68,7 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
-MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'rmdir', 'log', 
+MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'rmdir', 'log', 'where',
 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var', 
 'copy_dir', 'use_tool', 'install_tool', 'call_vcvars', 'github_checkout', 'github_release', 'github_upload']
 
@@ -760,6 +760,13 @@ def macro_call_vcvars(name, args, opts: Opts):
 def macro_untar(name, args, opts):
     print(args)
     return ''
+
+def macro_where(name, args, opts):
+    res = []
+    for n in args:
+        res.append('echo where {}'.format(n))
+        res.append('where {}'.format(n))
+    return "\n".join(res) + "\n"
 
 def macro_github_release(name, args, opts, githubdata: GitHubData):
     githubdata.release = args
