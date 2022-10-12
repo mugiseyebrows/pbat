@@ -694,7 +694,7 @@ def macro_use_tool(name, args, opts):
                 paths1.add('C:\\Ninja')
         elif n in ['mingw8', 'mingw81']:
             paths1.add('C:\\qt\\Tools\\mingw810_64\\bin')
-        elif n in ['qt5-mingw8']:
+        elif n == 'qt5-mingw8':
             paths1.add('C:\\Qt\\5.15.2\\mingw81_64\\bin')
         elif n == 'git':
             paths1.add('C:\\Program Files\\Git\\mingw64\\bin')
@@ -708,16 +708,18 @@ def macro_use_tool(name, args, opts):
         elif n in ['python', 'aqt']:
             if opts.github:
                 paths1.add("C:\\Miniconda")
+                paths1.add("C:\\Miniconda\\Scripts")
             else:
-                paths1.add('C:\\Miniconda3\\Scripts')
                 paths1.add('C:\\Miniconda3')
+                paths1.add('C:\\Miniconda3\\Scripts')
         elif n == '7z':
             paths1.add('C:\\Program Files\\7-Zip')
         else:
             print("use_tool({}) not implemented".format(n))
 
-    if len(paths1) > 0 or len(paths2):
-        return "set PATH=" + ";".join(list(paths1)) + ";" + ";".join(list(paths2) + ['%PATH%']) + "\n"
+    if len(paths1) + len(paths2) > 0:
+        paths = list(paths1) + list(paths2) + ['%PATH%']
+        return "set PATH=" + ";".join(paths) + "\n"
     return ""
 
 def macro_install_tool(name, args, opts):
