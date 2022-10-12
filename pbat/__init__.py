@@ -32,13 +32,18 @@ def literal_str_representer(dumper, data):
 yaml.add_representer(folded_str, folded_str_representer)
 yaml.add_representer(literal_str, literal_str_representer)
 
+def str_or_literal(items):
+    if len(items) == 1:
+        return items[0]
+    return literal_str("\n".join(items) + "\n")
+
 def make_release_step(artifacts):
     return {
         "name": "release",
         "uses": "ncipollo/release-action@v1",
         "if": "startsWith(github.ref, 'refs/tags/')",
         "with": {
-            "artifacts": literal_str("\n".join(artifacts) + "\n"),
+            "artifacts": str_or_literal(artifacts),
             "token": "${{ secrets.GITHUB_TOKEN }}"
         }
     }
@@ -49,7 +54,7 @@ def make_upload_step(name, artifacts):
         "uses": "actions/upload-artifact@v3",
         "with": {
             "name": name,
-            "path": literal_str("\n".join(artifacts) + "\n")
+            "path": str_or_literal(artifacts)
         }
     }
 
