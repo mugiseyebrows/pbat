@@ -42,6 +42,8 @@ def main():
 
     parser.add_argument("path", nargs='*', help='file, directory or glob')
     parser.add_argument('-o', '--output')
+    parser.add_argument('-c', '--compile', action='store_true')
+    parser.add_argument('-n', '--not-recursive', action='store_true', help="do not watch subdirectories")
     args = parser.parse_args()
     paths = []
 
@@ -84,6 +86,9 @@ def main():
 
     loop = EventLoop()
 
+    recursive = not args.not_recursive
+
+    decorated = [on_file_changed(path, recursive=recursive, loop=loop)(handler) for path in paths]
 
     def is_pbat(n):
         return os.path.splitext(n)[1].lower() == '.pbat'
