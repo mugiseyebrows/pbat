@@ -84,7 +84,21 @@ def main():
 
     loop = EventLoop()
 
-    decorated = [on_file_changed(path, recursive=False, loop=loop)(handler) for path in paths]
+
+    def is_pbat(n):
+        return os.path.splitext(n)[1].lower() == '.pbat'
+
+    if args.compile:
+        for path in paths:
+            if recursive:
+                for root, dirs, files in os.walk(path):
+                    for f in files:
+                        if is_pbat(f):
+                            handler(os.path.join(root, f))
+            else:
+                for f in os.listdir(path):
+                    if is_pbat(f):
+                        handler(os.path.join(path, f))
 
     loop.start()
     
