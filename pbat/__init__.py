@@ -677,24 +677,77 @@ def macro_copy_dir(name, args, opts):
 
 def macro_use_tool(name, args, opts):
     #print("opts", opts)
-    paths = set()
+    paths1 = set()
+    paths2 = set()
     for n in args:
         if n == 'xz':
-            paths.add('C:\\Program Files\\Git\\usr\\bin')
+            paths1.add('C:\\Program Files\\Git\\usr\\bin')
         elif n == 'tar':
-            paths.add('C:\\Program Files\\Git\\mingw64\\bin')
+            paths1.add('C:\\Program Files\\Git\\mingw64\\bin')
         elif n == 'ninja':
             if opts.github:
+                #paths.add('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
+                #paths2.add('C:\\ProgramData\\Chocolatey\\bin')
+                # C:\\ProgramData\\Chocolatey\\bin has gcc in it
                 pass
             else:
-                paths.add('C:\\Ninja')
+                paths1.add('C:\\Ninja')
+        elif n in ['mingw8', 'mingw81']:
+            paths1.add('C:\\qt\\Tools\\mingw810_64\\bin')
+        elif n in ['qt5-mingw8']:
+            paths1.add('C:\\Qt\\5.15.2\\mingw81_64\\bin')
+        elif n == 'git':
+            paths1.add('C:\\Program Files\\Git\\mingw64\\bin')
+        elif n == 'cmake':
+            if opts.github:
+                paths1.add('C:\\Program Files\\CMake\\bin')
+            else:
+                paths1.add('C:\\cmake-3.23.2-windows-x86_64\\bin')
+        elif n == 'patch':
+            paths1.add('C:\\Program Files\\Git\\usr\\bin')
+        elif n in ['python', 'aqt']:
+            if opts.github:
+                paths1.add("C:\\Miniconda")
+            else:
+                paths1.add('C:\\Miniconda3\\Scripts')
+                paths1.add('C:\\Miniconda3')
+        elif n == '7z':
+            paths1.add('C:\\Program Files\\7-Zip')
+        else:
+            print("use_tool({}) not implemented".format(n))
 
-    if len(paths) > 0:
-        return "set PATH=" + ";".join(list(paths) + ['%PATH%']) + "\n"
+    if len(paths1) > 0 or len(paths2):
+        return "set PATH=" + ";".join(list(paths1)) + ";" + ";".join(list(paths2) + ['%PATH%']) + "\n"
     return ""
 
 def macro_install_tool(name, args, opts):
-    return ''
+    res = []
+    for n in args:
+        if n == 'aqt':
+            res.append('where aqt || pip install aqtinstall')
+        elif n in ['mingw8', 'mingw81']:
+            res.append('if not exist C:\\Qt\\Tools\\mingw810_64\\bin\\gcc.exe aqt install-tool --outputdir C:\\Qt windows desktop tools_mingw qt.tools.win64_mingw810')
+        elif n == 'cmake':
+            if opts.github:
+                # windows-2022 C:\Program Files\CMake\bin\cmake.exe
+                pass
+            else:
+                download_expr, _ = macro_download('', ['https://github.com/Kitware/CMake/releases/download/v3.24.2/cmake-3.24.2-windows-x86_64.zip', 'cmake-3.24.2-windows-x86_64.zip', 'force'], opts)
+                #unzip_expr, _ = macro_unzip('', ['cmake-3.24.2-windows-x86_64.zip', 'cmake-3.24.2-windows-x86_64'], opts)
+                res.append('if not exist C:\\cmake-3.24.2-windows-x86_64\\bin\\cmake.exe (')
+                res.append(download_expr.rstrip())
+                res.append('7z x -y -oC:\ cmake-3.24.2-windows-x86_64.zip')
+                res.append(')')
+        elif n == 'ninja':
+            if opts.github:
+                # windows-2022 C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
+                pass
+            else:
+                pass
+        else:
+            print("install_tool({}) not implemented".format(n))
+
+    return "\n".join(res) + "\n"
 
 def macro_call_vcvars(name, args, opts: Opts):
     if opts.github:
