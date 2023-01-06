@@ -6,7 +6,7 @@ with open('readme.md', encoding='utf-8') as f:
 setup(
     packages = find_packages(),
     name = 'pbat',
-    version = '0.0.12',
+    version = '0.0.13',
     author = "Stanislav Doronin",
     author_email = "mugisbrows@gmail.com",
     url = 'https://github.com/mugiseyebrows/pbat',
