@@ -1,0 +1,25 @@
+start: (name "=")? name "(" args? ")"
+
+args: arg ("," arg)*
+
+arg: ARG ("=" ARG)?
+   | list
+
+list: "[" ARG ("," ARG)* "]" | "[" "]"
+
+ARG: (LETTER | NUMBER | PUNCT_NO_COMMA | WS)+
+   | "\"" (LETTER | NUMBER | PUNCT | WS | "(" | ")")+ "\""
+
+name: /[A-Za-z0-9_]+/
+
+LETTER: ("а".."я") | ("А".."Я") | /[A-Za-z]/
+
+NUMBER: /[0-9]+/
+
+PUNCT_NO_COMMA: /[\\\/:.@_%~-]/
+
+PUNCT: PUNCT_NO_COMMA | ","
+
+%import common.WS
+
+%ignore WS

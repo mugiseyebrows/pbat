@@ -13,9 +13,9 @@ setup(
     description = 'Batch file preprocessor',
     long_description = long_description,
     long_description_content_type = 'text/markdown',
-    install_requires = [],
+    install_requires = ['lark'],
     package_data = {
-        'pbat': ['examples/*.pbat', 'examples/*.bat']
+        'pbat': ['examples/*.pbat', 'examples/*.bat', 'pbat.lark']
     },
     entry_points = {
         'console_scripts': [

@@ -1,7 +1,11 @@
 import os
 import argparse
 import glob
-from . import read_compile_write, get_dst_bat, get_dst_workflow
+
+try:
+    from .core import read_compile_write, get_dst_bat, get_dst_workflow
+except ImportError:
+    from core import read_compile_write, get_dst_bat, get_dst_workflow
 
 def find_pbats(path):
     paths = []

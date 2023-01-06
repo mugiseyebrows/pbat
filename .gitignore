@@ -3,3 +3,4 @@ dist/
 build/
 pbat.egg-info/
 aqtinstall.log
+.vscode/
