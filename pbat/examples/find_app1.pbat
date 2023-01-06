@@ -1,0 +1,4 @@
+
+def main
+    CURL = find_app(["C:\Program Files\Git\mingw64\bin\curl.exe",C:\Git\mingw64\bin\curl.exe, C:\curl\bin\curl.exe])
+    echo ok

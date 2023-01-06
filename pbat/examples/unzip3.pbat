@@ -1,0 +1,4 @@
+def main
+    unzip(x86_64-8.1.0-release-posix-seh-rt_v6-rev0.7z, C:\mingw\bin\gcc.exe, @output = C:\)
+
+zip_in_path 1

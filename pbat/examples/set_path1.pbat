@@ -1,0 +1,15 @@
+def fetch
+    download(https://github.com/mugiseyebrows/event-loop/archive/refs/tags/0.0.14.zip, 0.0.14.zip)
+    unzip(0.0.14.zip, 0.0.14)
+
+def main
+    set_path(
+        C:\Program Files\7-Zip, 
+        "C:\Program Files (x86)\7-Zip",
+        C:\Windows\System32
+    )
+
+order main fetch
+
+zip_in_path 1
+curl_in_path 1

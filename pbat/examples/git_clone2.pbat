@@ -1,0 +1,4 @@
+def main
+    git_clone(https://github.com/mugiseyebrows/pbat.git, @branch = main)
+
+git_in_path 1

@@ -1,14 +1,9 @@
-def tool_curl
-    find_app(CURL, [C:\Windows\System32\curl.exe, C:\Program Files\Git\mingw64\bin\curl.exe, C:\msys64\usr\bin\curl.exe], curl_not_found)
+def dist
+    python setup.py bdist_wheel
 
-def curl_not_found
-    echo curl not found
-
-def fetch depends on tool_curl
-    download(https://github.com/mugiseyebrows/event-loop/archive/refs/tags/0.0.14.zip, 0.0.14.zip)
-    unzip(0.0.14.zip, 0.0.14)
+def upload depends on dist
+    twine upload dist\app-0.0.1-py3-none-any.whl
 
 def main
-    set PATH=C:\Program Files\7-Zip;C:\Program Files (x86)\7-Zip
-
-order main fetch
+    
+order main upload
