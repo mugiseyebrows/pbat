@@ -12,8 +12,10 @@ except ImportError:
 
 ON_PUSH = 1
 ON_TAG = 2
+ON_RELEASE = 3
 WINDOWS_2019 = "windows-2019"
 WINDOWS_2022 = "windows-2022"
+WINDOWS_LATEST = "windows-latest"
 CHECKSUM_ALGS = ['b2','md5','sha1','sha224','sha256','sha384','sha512']
 
 def get_dst_bat(src):
@@ -65,8 +67,10 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if on == ON_TAG:
         on_ = {"push":{"tags":"*"}}
-    else:
+    elif on == ON_PUSH:
         on_ = "push"
+    elif on == ON_RELEASE:
+        on_ = {"release": {"types": ["created"]}}
     data = {"name":"main","on":on_,"jobs":{"main": {"runs-on":runs_on,"steps":steps}}}
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
@@ -133,6 +137,8 @@ class Opts:
     zip_in_path = False
     git_in_path = False
     github_workflow = False
+    github_image: str = WINDOWS_LATEST
+    github_on: int = ON_PUSH
 
 @dataclass
 class GitHubData:
@@ -283,6 +289,21 @@ def read(src):
         m = re.match('^(debug|clean|curl_in_path|zip_in_path|git_in_path|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)$', line)
         if m is not None:
             setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
+            continue
+
+        m = re.match('^\\s*github[-_]image\\s+(.*)$', line)
+        if m:
+            opts.github_image = m.group(1).strip()
+            continue
+
+        m = re.match('^\\s*github[-_]on\\s+(.*)$', line)
+        if m:
+            trigger = m.group(1).strip()
+            opts.github_on = {
+                "push": ON_PUSH,
+                "release": ON_RELEASE,
+                "tag": ON_TAG
+            }[trigger]
             continue
 
         m = re.match('^curl_user_agent\\s+(safari|chrome|mozilla)$', line)
@@ -1057,7 +1078,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 steps.append(make_upload_step(name, artifacts))
             if len(githubdata.release) > 0:
                 steps.append(make_release_step(githubdata.release))
-            save_workflow(dst_workflow, steps, ON_PUSH, WINDOWS_2022)
+            save_workflow(dst_workflow, steps, opts.github_on, opts.github_image)
         else:
             if verbose and isinstance(src, str) and isinstance(dst_bat, str):
                 print("{} -> {}".format(src, dst_bat))
