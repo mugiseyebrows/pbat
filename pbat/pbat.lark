@@ -7,8 +7,8 @@ arg: ARG ("=" ARG)?
 
 list: "[" ARG ("," ARG)* "]" | "[" "]"
 
-ARG: (LETTER | NUMBER | PUNCT_NO_COMMA | WS)+
-   | "\"" (LETTER | NUMBER | PUNCT | WS | "(" | ")")+ "\""
+ARG: (LETTER | NUMBER | PUNCT | WS)+
+   | "\"" (LETTER | NUMBER | PUNCT | WS | "(" | ")" | ",")+ "\""
 
 name: /[A-Za-z0-9_]+/
 
@@ -16,9 +16,7 @@ LETTER: ("а".."я") | ("А".."Я") | /[A-Za-z]/
 
 NUMBER: /[0-9]+/
 
-PUNCT_NO_COMMA: /[\\\/:.@_%~-]/
-
-PUNCT: PUNCT_NO_COMMA | ","
+PUNCT: /[\\\/:.@_%~-]/
 
 %import common.WS
 
