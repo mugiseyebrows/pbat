@@ -765,7 +765,8 @@ def if_group(cond, cmds):
         return "if {} {}\n".format(cond, cmds[0])
     return """if {} (
 {}
-)""".format(cond, "\n".join(cmds))
+)
+""".format(cond, "\n".join(cmds))
 
 
 def macro_git_clone(name, args, kwargs, ret, opts: Opts):
