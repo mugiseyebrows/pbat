@@ -682,12 +682,19 @@ if errorlevel 1 exit /b 1
 """.format(dest, dest, url, dest, checksums[dest], dest)
     return exp, clean_exp
 
+def kwarg_value(kwargs, *names):
+    for name in names:
+        value = kwargs.get(name)
+        if value is not None:
+            return value
+
+
 def macro_unzip(name, args, kwargs, ret, opts):
 
     src = args[0]
     force = kwargs.get('force')
     keep = kwargs.get('keep')
-    output = kwargs.get('output')
+    output = kwarg_value(kwargs, 'output', 'o')
 
     if len(args) > 1:
         test = args[1]
