@@ -35,10 +35,13 @@ pbat examples
 ```
 
 # Watch and compile
+
+You can use `eventloop` to trigger `pbat` on filechange
+
 ```cmd
-python -m pbat.watch examples
+onchange path\to\dir -i *.pbat -- pbat FILE
 ```
-or
+
 ```cmd
-pbat.watch examples
+onchange path\to\file -- pbat FILE
 ```
