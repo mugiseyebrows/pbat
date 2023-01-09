@@ -271,7 +271,7 @@ def read(src):
                 name = m2.group(1)
             used.add(name)
             if name == 'download':
-                m = re.search('@({})\\s*='.format("|".join(CHECKSUM_ALGS)), line)
+                m = re.search(':({})\\s*='.format("|".join(CHECKSUM_ALGS)), line)
                 if m:
                     alg = m.group(1)
                     chksum_used.add(alg)

@@ -1,22 +1,22 @@
-start: (name "=")? name "(" args? ")"
+start: (ret_name "=")? fn_name ( "(" arg ("," arg)* ")" | "(" ")" )
 
-args: arg ("," arg)*
+name: NAME
 
-arg: ARG ("=" ARG)?
-   | list
+ret_name: NAME
 
-list: "[" ARG ("," ARG)* "]" | "[" "]"
+fn_name: NAME
 
-ARG: (LETTER | NUMBER | PUNCT | WS)+
-   | "\"" (LETTER | NUMBER | PUNCT | WS | "(" | ")" | ",")+ "\""
+?arg: parg | kwarg
 
-name: /[A-Za-z0-9_]+/
+parg: ARG | list
 
-LETTER: ("а".."я") | ("А".."Я") | /[A-Za-z]/
+kwarg: ":" name ("=" parg)?
 
-NUMBER: /[0-9]+/
+list: "[" parg ("," parg)* "]" | "[" "]"
 
-PUNCT: /[\\\/:.@_%~-]/
+NAME: /[a-z0-9_]+/i
+
+ARG: /([^",()\[\]:\s][^",()\[\]]*)|("[^"]*")/
 
 %import common.WS
 
