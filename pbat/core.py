@@ -5,6 +5,8 @@ import random
 import textwrap
 import yaml
 
+# todo exception if %~dp0 and opts.github
+
 try:
     from .parseargs import parse_args
 except ImportError:
@@ -63,7 +65,7 @@ def make_upload_step(name, artifacts):
         }
     }
 
-def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
+def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019, matrix = None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if on == ON_TAG:
         on_ = {"push":{"tags":"*"}}
@@ -71,13 +73,22 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019):
         on_ = "push"
     elif on == ON_RELEASE:
         on_ = {"release": {"types": ["created"]}}
-    data = {"name":"main","on":on_,"jobs":{"main": {"runs-on":runs_on,"steps":steps}}}
+
+    main = {"runs-on":runs_on}
+
+    if matrix:
+        main["strategy"] = {"matrix": matrix, "fail-fast": False}
+
+    main['steps'] = steps
+
+    data = {"name":"main","on":on_,"jobs":{"main": main}}
+
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
 MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'rmdir', 'log', 'where',
 'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var',
-'if_arg',
+'if_arg', 'patch', 'github_matrix', 'pushd_cd', 'popd_cd',
 'copy_dir', 'use_tool', 'install_tool', 'call_vcvars', 'github_checkout', 'github_release', 'github_upload']
 
 """
@@ -136,6 +147,7 @@ class Opts:
     github: bool = False
     zip_in_path = False
     git_in_path = False
+    patch_in_path = False
     github_workflow = False
     github_image: str = WINDOWS_LATEST
     github_on: int = ON_PUSH
@@ -145,6 +157,7 @@ class GitHubData:
     checkout: bool = False
     release: list = field(default_factory=list)
     upload: list = field(default_factory=list)
+    matrix: dict = field(default_factory=dict)
 
 """
 def parse_args(s):
@@ -286,10 +299,17 @@ def read(src):
     name = None
     for i, line in enumerate(lines):
         line = line.strip()
-        m = re.match('^(debug|clean|curl_in_path|zip_in_path|git_in_path|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)$', line)
+        m = re.match('^(debug|clean|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)$', line)
         if m is not None:
             setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
             continue
+
+        m = re.match('^\\s*([a-z0-9_]+_in_path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
+        if m:
+            name = m.group(1)
+            if hasattr(opts, name):
+                setattr(opts, name, m.group(2) in ['on','true','1'])
+                continue
 
         m = re.match('^\\s*github[-_]image\\s+(.*)$', line)
         if m:
@@ -379,6 +399,8 @@ def read(src):
         defs['main'] = ['P7Z = find_app([C:\\Program Files\\7-Zip\\7z.exe])\n'] + defs['main']
     if 'git_clone' in used and not opts.git_in_path:
         defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])'] + defs['main']
+    if 'patch' in used and not opts.patch_in_path:
+        defs['main'] = ['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])'] + defs['main']
 
     for alg in chksum_used:
         exe = alg + 'sum.exe'
@@ -526,57 +548,41 @@ def remove_redundant_gotos(res):
 
     return changed
 
+def validate_args(fnname, args, kwargs, ret, argmin, argmax, kwnames, needret = False):
+    if not (argmin <= len(args) <= argmax):
+        if argmin == argmax:
+            nargs = str(argmin)
+        else:
+            nargs = "{} to {}".format(argmin, argmax)
+        raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
+    for n in kwargs:
+        if n not in kwnames:
+            raise Exception("{} unknown option {}".format(fnname, n))
+    if needret and ret is None:
+        raise Exception("{} must be assigned to env variable".format(fnname))
+
 def macro_find_app(name, args, kwargs, ret, opts):
-    #print(args)
-    return macro_find_app3(name, args, kwargs, ret, opts)
-    """
-    app = args[0]
-    items = args[1]
-    label = args[2]
-    label_success = "{}_find_app_found".format(name)
-    label_append = "{}_find_app_append".format(name)
-    test = "where {} && goto {}\n".format(app, label_success)
-    tests = ["if exist \"{}\" goto {}\n".format(item, label_append) for item in items]
-    puts = ["if exist \"{}\" set PATH={};%PATH%\n".format(item, os.path.dirname(item)) for item in items]
-    return test + "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_append + "\n" + "".join(puts) + ":" + label_success + "\n"
-    """
-
-def macro_find_app2(name, args, kwargs, ret, opts):
-    env_name = args[0]
-    app = args[1]
-    items = args[2]
-    label = args[3]
-
-    label_success = "{}_find_app_found".format(name)
-
-    tests = ["if exist \"{}\" goto {}_find_app_found_{}\n".format(item, name, i+1) for i,item in enumerate(items)]
     
-    founds = [
-        "".join([":{}_find_app_found_{}\n".format(name, i+1), 
-        "set {}={}\n".format(env_name, item),
-        "goto {}\n".format(label_success)]) for i,item in enumerate(items)]
+    validate_args("find_app", args, kwargs, ret, 1, 1, {"g", "goto", "c", "cmd"}, True)
 
-    test0 = "where {} && goto {}_find_app_found_0\n".format(app, name)
+    err_goto = kwarg_value(kwargs, 'goto', 'g')
+    err_cmd = kwarg_value(kwargs, 'cmd', 'c')
 
-    found0 = "".join([":{}_find_app_found_{}\n".format(name, 0), 
-        "set {}={}\n".format(env_name, app),
-        "goto {}\n".format(label_success)])
-
-    return test0 + "".join(tests) + "goto {}_begin\n".format(label) + found0 + "".join(founds) + ":{}\n".format(label_success)
-
-def macro_find_app3(name, args, kwargs, ret, opts):
-    if ret is None:
-        raise Exception("find_app must return to env value")
-    env_name = ret
-    items = args[0]
-    if len(args) > 1:
-        label = args[1]
-        error = 'goto {}_begin'.format(label)
+    if err_goto:
+        error = 'goto {}_begin'.format(err_goto)
+    elif err_cmd:
+        error = err_cmd
     else:
         error = """(
 echo {} not found
 exit /b
 )""".format(ret)
+
+    env_name = ret
+    items = args[0]
+    if len(args) > 1:
+        raise ValueError("find_app requires one positional argument")
+        
     tests = ["if exist \"{}\" set {}={}\n".format(item, env_name, item) for i,item in enumerate(reversed(items))]
     tests = tests + ['if not defined {} {}\n'.format(env_name, error)]
     return "".join(tests)
@@ -747,6 +753,24 @@ def macro_zip(name, args, kwargs, ret, opts):
     else:
         return cmd
 
+def macro_patch(name, args, kwargs, ret, opts: Opts):
+    validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p", "strip"})
+    if opts.patch_in_path:
+        patch = "patch"
+    else:
+        patch = '"%PATCH%"'
+
+    cmd = [patch]
+    if kwarg_value(kwargs, 'N', "forward"):
+        cmd.append('-N')
+    p = kwarg_value(kwargs, "p", "strip")
+    if p:
+        cmd.append('-p{}'.format(p))
+
+    cmd = cmd + ["-i", quoted(args[0])]
+
+    return " ".join(cmd) + "\n"
+    
 def macro_mkdir(name, args, kwargs, ret, opts):
     arg = args[0]
     return "if not exist \"{}\" mkdir \"{}\"\n".format(arg, arg)
@@ -807,7 +831,14 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts):
     else:
         cmds = [clone]
 
-    return if_group(cond, cmds)
+    cmd = if_group(cond, cmds)
+    if kwargs.get('pull'):
+        cmd = cmd + """pushd {}
+{} pull
+popd
+""".format(basename, git)
+
+    return cmd
 
 def macro_git_pull(name, args, kwargs, ret, opts):
     base = args[0]
@@ -818,8 +849,10 @@ def macro_git_pull(name, args, kwargs, ret, opts):
     """).format(base)
 
 def macro_set_path(name, args, kwargs, ret, opts):
+    """
     if opts.github:
         return "echo PATH={}>> %GITHUB_ENV%\n".format(";".join(args))
+    """
     return "set PATH=" + ";".join(args) + "\n"
 
 def macro_set_var(name, args, kwargs, ret, opts):
@@ -941,6 +974,22 @@ def macro_github_checkout(name, args, kwargs, ret, opts, githubdata: GitHubData)
 def macro_github_upload(name, args, kwargs, ret, opts, githubdata: GitHubData):
     githubdata.upload = args
     return ''
+
+def macro_github_matrix(name, args, kwargs, ret, opts, githubdata: GitHubData):
+    validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
+    githubdata.matrix[ret] = args[0]
+    #print("macro_github_matrix", githubdata.matrix)
+    return ''
+
+def macro_pushd_cd(name, args, kwargs, ret, opts):
+    if opts.github:
+        return ''
+    return 'pushd %~dp0\n'
+
+def macro_popd_cd(name, args, kwargs, ret, opts):
+    if opts.github:
+        return ''
+    return 'popd\n'
 
 def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
 
@@ -1075,6 +1124,12 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             if verbose and isinstance(src, str) and isinstance(dst_workflow, str):
                 print("{} -> {}".format(src, dst_workflow))
             text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
+
+            if githubdata.matrix:
+                for i, line in enumerate(text):
+                    for key, values in githubdata.matrix.items():
+                        text[i] = text[i].replace(values[0], "${{ matrix." + key + " }}")
+
             build_step = pack_step(text, os.path.splitext(src_name)[0], local=False)
             steps = []
             if githubdata.checkout:
@@ -1086,7 +1141,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 steps.append(make_upload_step(name, artifacts))
             if len(githubdata.release) > 0:
                 steps.append(make_release_step(githubdata.release))
-            save_workflow(dst_workflow, steps, opts.github_on, opts.github_image)
+            save_workflow(dst_workflow, steps, opts.github_on, opts.github_image, githubdata.matrix)
         else:
             if verbose and isinstance(src, str) and isinstance(dst_bat, str):
                 print("{} -> {}".format(src, dst_bat))
