@@ -15,7 +15,7 @@ setup(
     long_description_content_type = 'text/markdown',
     install_requires = ['lark'],
     package_data = {
-        'pbat': ['examples/*.pbat', 'examples/*.bat', 'pbat.lark']
+        'pbat': ['examples/*.pbat', 'examples/*.bat', '*.lark']
     },
     entry_points = {
         'console_scripts': [

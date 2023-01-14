@@ -1,0 +1,17 @@
+start: "def" defname attr*
+
+?attr: then | depends | shell
+
+then.1: "then" NAME
+
+depends: "depends" "on" NAME+
+
+shell: "shell" NAME
+
+defname: NAME
+
+NAME: /[a-z0-9_-]+/i
+
+%import common.WS
+
+%ignore WS

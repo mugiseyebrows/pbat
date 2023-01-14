@@ -5,10 +5,14 @@ import random
 import textwrap
 import yaml
 
+# todo shell python
+
 try:
-    from .parseargs import parse_args
+    from .parsemacro import parse_macro
+    from .parsedef import parse_def
 except ImportError:
-    from parseargs import parse_args
+    from parsemacro import parse_macro
+    from parsedef import parse_def
 
 ON_PUSH = 1
 ON_TAG = 2
@@ -35,7 +39,7 @@ class Opts:
     github_workflow = False
     github_image: str = WINDOWS_LATEST
     github_on: int = ON_PUSH
-    msys2_msystem: str = 'MINGW64'
+    msys2_msystem: str = None
 
 @dataclass
 class GitHubDataUpload:
@@ -56,7 +60,7 @@ class GitHubDataSetupMsys2:
 @dataclass
 class GithubShellStep:
     run: str = None
-    shell: int = SHELL_CMD
+    shell: str = "cmd"
     name: str = None
     
 @dataclass
@@ -131,8 +135,9 @@ def make_upload_step(data: GitHubDataUpload):
         }
     }
 
-def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019, matrix = None):
+def save_workflow(path, steps, opts: Opts, github: GitHubData):
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    on = opts.github_on
     if on == ON_TAG:
         on_ = {"push":{"tags":"*"}}
     elif on == ON_PUSH:
@@ -140,14 +145,22 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019, matrix = Non
     elif on == ON_RELEASE:
         on_ = {"release": {"types": ["created"]}}
 
-    main = {"runs-on":runs_on}
+    main = {"runs-on":opts.github_image}
 
-    if matrix:
-        main["strategy"] = {"matrix": matrix, "fail-fast": False}
+    if github.matrix:
+        main["strategy"] = {"matrix": github.matrix, "fail-fast": False}
 
     main['steps'] = steps
 
-    data = {"name":"main","on":on_,"jobs":{"main": main}}
+    data = {"name":"main","on":on_}
+
+    if opts.msys2_msystem:
+        data["env"] = {
+            "MSYSTEM": opts.msys2_msystem,
+            "CHERE_INVOKING": 'yes'
+        }
+
+    data["jobs"] = {"main": main}
 
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
@@ -155,8 +168,11 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019, matrix = Non
 def make_setup_msys2_step(data: GitHubDataSetupMsys2, opts: Opts):
     if data.msystem:
         msystem = data.msystem
-    else:
+    elif opts.msys2_msystem:
         msystem = opts.msys2_msystem
+    else:
+        msystem = 'MINGW64'
+
     obj = {
         "name": "setup-msys2",
         "uses": "msys2/setup-msys2@v2",
@@ -170,19 +186,34 @@ def make_setup_msys2_step(data: GitHubDataSetupMsys2, opts: Opts):
         obj["with"]["update"] = data.update
     return obj
 
-def make_github_step(step: GithubShellStep, opts: Opts):
+def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GitHubData):
 
     obj = dict()
 
     if step.name:
         obj["name"] = step.name
 
-    obj["shell"] = {SHELL_CMD: "cmd", SHELL_MSYS2: "msys2 {0}"}[step.shell]
+    shell = step.shell
+    if isinstance(shell, int):
+        shell = {SHELL_CMD: "cmd", SHELL_MSYS2: "msys2 {0}"}[step.shell]
+
+    if shell == "msys2":
+        if githubdata.setup_msys2:
+            shell = "msys2 {0}"
+        else:
+            print("warning: you might forget to add github_setup_msys2() to script")
+            shell = "C:\\msys64\\usr\\bin\\bash.exe {0}"
+
+    obj["shell"] = shell
     
-    if step.shell == SHELL_MSYS2:
-        obj["env"] = {"MSYSTEM": opts.msys2_msystem, "CHERE_INVOKING": 'yes'}
+    if opts.msys2_msystem:
+        pass
+
+    if shell == "msys2":
+        if opts.msys2_msystem is None:
+            obj["env"] = {"MSYSTEM": opts.msys2_msystem, "CHERE_INVOKING": 'yes'}
     
-    obj["run"] = str_or_literal([step.run])
+    obj["run"] = str_or_literal(step.run.split("\n"))
 
     return obj
 
@@ -199,7 +230,7 @@ def count_parenthesis(line):
             cl += 1
     return op, cl
 
-def read(src):
+def read(src, github):
 
     def_line = dict()
 
@@ -208,6 +239,9 @@ def read(src):
     deps = dict()
 
     thens = dict()
+
+    shells = dict()
+
     opts = Opts()
 
     lines = []
@@ -345,22 +379,34 @@ def read(src):
             opts.curl_proxy = m.group(1).rstrip()
             continue
         
-        m = re.match('^def\\s+([a-z0-9_]+)\\s*(then\\s*[a-z0-9_]+)?\\s*(depends\\s*on\\s*[a-z0-9_ ]+)?', line)
-        if m is not None:
-            name = m.group(1)
-            then = m.group(2).split(' ')[-1] if m.group(2) else None
-            deps_ = re.split('\\s+', m.group(3))[2:] if m.group(3) else None
+        ID = "([0-9a-z_]+)"
+        IDS = "([0-9a-z_ ]*)"
+        SPACE = "\\s*"
+        START = "^\\s*"
+        END = "\\s*$"
 
-            if deps_ is not None:
-                deps[name] = deps_
+        m = re.match(pattern_join(START, 'def', SPACE, ID, SPACE, IDS, END), line)
+        if m is not None:
+
+            name, then, deps_, shell = parse_def(line)
+            #print("name {} then {} deps_ {} shell {}".format(name, then, deps_, shell))
+
+            deps_ = []
+            if shell is None:
+                shell = 'cmd'
+
+            deps[name] = deps_
+            if then is not None:
+                thens[name] = then
+            shells[name] = shell
 
             if name in defs:
                 print("redefinition {} on line {}, first defined on line {}".format(name, i+1, def_line[name]))
             def_line[name] = i
             defs[name] = []
 
-            if then is not None:
-                thens[name] = then
+            #print("line {} def {} depends on {} then {} shell {}".format(i, name, deps_, then, shell))
+            
             continue
         """
         m = re.match('^def\\s+([a-z0-9_]+)$', line)
@@ -370,9 +416,11 @@ def read(src):
             thens[name] = "end"
             continue
         """
-        m = re.match('^order\\s+(.*)$', line)
+        # todo calculate order after parse
+        m = re.match('^\\s*order\\s+(.*)$', line)
         if m is not None:
             names = re.split('\\s+', m.group(1))
+            
             names_ = insert_deps(names, deps)
             for n1, n2 in zip(names_, names_[1:]):
                 thens[n1] = n2
@@ -385,6 +433,8 @@ def read(src):
         if name is not None:
             defs[name].append(line + "\n")
 
+
+    """
     for k, v in thens.items():
         m = re.match('next\((.*)\)', v)
         if m is not None:
@@ -394,6 +444,7 @@ def read(src):
                 #print("{} is {}".format(v, thens[n]))
             else:
                 print("cannot expand {}".format(v))
+    """
 
     for n1, n2 in thens.items():
         if n1 not in defs:
@@ -408,16 +459,25 @@ def read(src):
     if ('zip' in used or 'unzip' in used) and not opts.zip_in_path:
         defs['main'] = ['P7Z = find_app([C:\\Program Files\\7-Zip\\7z.exe])\n'] + defs['main']
     if 'git_clone' in used and not opts.git_in_path:
-        defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])'] + defs['main']
+        defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])\n'] + defs['main']
     if 'patch' in used and not opts.patch_in_path:
-        defs['main'] = ['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])'] + defs['main']
+        defs['main'] = ['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])\n'] + defs['main']
+
+    if 'msys2' in shells.values():
+        if github:
+            pass
+        else:
+            defs['main'] = [
+                'MSYS2 = find_app([C:\\msys64\\usr\\bin\\bash.exe])\n',
+                'set_var(CHERE_INVOKING, yes)\n'
+            ] + defs['main']
 
     for alg in chksum_used:
         exe = alg + 'sum.exe'
         var = (alg + 'sum').upper()
-        defs['main'] = ['{} = find_app([C:\\Program Files\\Git\\usr\\bin\\{}])'.format(var, exe)] + defs['main']
-
-    return defs, thens, opts
+        defs['main'] = ['{} = find_app([C:\\Program Files\\Git\\usr\\bin\\{}])\n'.format(var, exe)] + defs['main']
+    
+    return defs, thens, shells, opts
 
 def insert_deps(names, deps):
     res = []
@@ -455,8 +515,46 @@ def find_app(name, items, label):
 def without(vs, v):
     return [e for e in vs if e != v]
 
-def render(defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
+
+def render_one(name, defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
+    if not opts.debug and echo_off:
+        res = res + ['@echo off\n']
+
+    if warning:
+        res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
+
+    if 'main' not in defs:
+        print("main not defined")
+        return ""
+
+    keys = [ name ]
+
+    for name in keys:
+        lines = defs[name]
+        #res.append("rem def {}\n".format(name))
+        res.append(":{}_begin\n".format(name))
+        if opts.debug:
+            res.append("echo {}\n".format(name))
+            res.append(macro_log(name, [name]))
+        res.append("".join(lines))
+        res.append(":{}_end\n".format(name))
+        #res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
+        res.append("\n")
+
+    while(True):
+        ok1 = remove_unused_labels(res)
+        ok2 = remove_redundant_gotos(res)
+        if not ok1 and not ok2:
+            break
+
+    return "".join(res)
+
+def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, warning=True):
+    res = []
+
+    files = []
+
     if not opts.debug and echo_off:
         res = res + ['@echo off\n']
 
@@ -479,7 +577,19 @@ def render(defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
         if opts.debug:
             res.append("echo {}\n".format(name))
             res.append(macro_log(name, [name]))
-        res.append("".join(lines))
+
+        if shells[name] == 'cmd':
+            res.append("".join(lines))
+        elif shells[name] == 'msys2':
+            file_name = "{}_{}.sh".format(os.path.splitext(src_name)[0], name)
+            file_content = "#!/bin/bash\n" + "".join(lines) + "\n"
+            files.append((file_name, file_content))
+            if opts.msys2_msystem:
+                res.append("set MSYSTEM={}\n".format(opts.msys2_msystem))
+            res.append('"%MSYS2%" {}\n'.format(file_name))
+        else:
+            raise Exception('unknown shell {}'.format(shells[name]))
+
         res.append(":{}_end\n".format(name))
         res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
         res.append("\n")
@@ -490,7 +600,7 @@ def render(defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
         if not ok1 and not ok2:
             break
 
-    return "".join(res)
+    return "".join(res), files
 
 def remove_unused_labels(res):
     #print('remove_unused_labels')
@@ -1031,7 +1141,7 @@ def macro_substr(name, args, kwargs, ret, opts):
         ixs = stop
     return 'set {}=%{}:~{}%\n'.format(ret, varname, ixs)
     
-def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
+def expand_macros(defs, thens, opts, githubdata: GitHubData):
 
     if 'clean' not in defs:
         defs['clean'] = []
@@ -1041,15 +1151,12 @@ def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
             for n in MACRO_NAMES:
                 m = re.match('(.*=)?\\s*' + n + '\\s*\((.*)\)$', line)
                 if m is not None:
-                    ret, name_, args, kwargs = parse_args(line)
+                    ret, name_, args, kwargs = parse_macro(line)
 
                     if n.split("_")[0] == 'github':
                         exp = globals()['macro_' + n](name, args, kwargs, ret, opts, githubdata)
                     elif n in ['download', 'unzip']:
                         exp, clean_exp = globals()['macro_' + n](name, args, kwargs, ret, opts)
-                        defs['clean'].append(clean_exp)
-                    elif n == 'download2':
-                        exp, clean_exp = globals()['macro_' + n](name, args, kwargs, ret, opts, checksums)
                         defs['clean'].append(clean_exp)
                     else:
                         exp = globals()['macro_' + n](name, args, kwargs, ret, opts)
@@ -1060,7 +1167,11 @@ def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
                     else:
                         defs[name][i] = exp
                     continue
-    defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
+
+    if len(defs['clean']) > 0:
+        defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
+    else:
+        del defs['clean']
 
 def write(path, text):
     if isinstance(path, str):
@@ -1081,41 +1192,6 @@ def create_id():
     used_ids.add(id_)
     return id_
 
-def append_verify_checksum(defs, thens):
-    tmpfile = '%TEMP%\\checksum_{}.txt'.format(create_id())
-    exp = [line + "\n" for line in """:verify_checksum_sha1
-if not defined SHA1SUM (
-    echo SHA1SUM not defined
-    exit /b 1
-)
-"%SHA1SUM%" "%1" > {}
-for /f %%i in ({}) do if "%%i" equ "%2" exit /b 0
-echo checksum fail "%1"
-del /q "%1"
-exit /b 1
-""".format(tmpfile, tmpfile).split("\n")]
-    defs['verify_checksum_sha1'] = exp
-
-def read_checksums(path):
-    if isinstance(path, str):
-        base = os.path.dirname(path)
-    else:
-        base = os.getcwd()
-    checksums = dict()
-    path = os.path.join(base, "sha1sum.txt")
-    if not os.path.exists(path):
-        return checksums
-    try:
-        with open(path) as f:
-            for line in f:
-                s, n = line.split(" ", 1)
-                n = unquoted(n.lstrip("*"))
-                checksums[n] = s
-    except Exception as e:
-        print(e)
-    return checksums
-
-
 class Dumper(yaml.Dumper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1134,6 +1210,44 @@ def make_main_step(cmds, name, local):
             "run": str_or_literal(cmds)
         }
 
+
+def is_empty_def(def_):
+    if def_ is None:
+        return True
+    for line in def_:
+        if line.strip() != "":
+            print(line)
+            return False
+    return True
+
+def defnames_ordered(defs, thens):
+    res = ['main']
+    """
+    while len(res) < len(defs):
+        if res[-1] in thens:
+            res.append(thens[res[-1]])
+        else:
+            for n in defs.keys():
+                if n not in res:
+                    res.append(n)
+                    break
+    """
+
+    #print("thens", thens)
+
+    while len(res) < len(defs):
+        if res[-1] in thens:
+            res.append(thens[res[-1]])
+        else:
+            not_used = set(defs.keys()).difference(set(res))
+            print("warning: not used defs ({}) will not be in workkflow".format(", ".join(not_used)))
+            break
+
+    return res
+
+def filter_empty_lines(text):
+    return "\n".join([l for l in text.split('\n') if l.strip() != ''])
+
 def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
 
     if isinstance(src, str):
@@ -1141,10 +1255,12 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     else:
         src_name = 'untitled'
 
+    dst_paths = []
+
     for github in [False, True]:
         githubdata = GitHubData()
         
-        defs, thens, opts = read(src)
+        defs, thens, shells, opts = read(src, github)
 
         if github and not opts.github_workflow:
             continue
@@ -1152,17 +1268,17 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
         if github:
             os.makedirs(os.path.dirname(dst_workflow), exist_ok=True)
 
-        checksums = read_checksums(src)
         opts.github = github
         release = []
-        expand_macros(defs, thens, opts, checksums, githubdata)
+        expand_macros(defs, thens, opts, githubdata)
 
-        append_verify_checksum(defs, thens)
-            
         if github:
+            """
             if verbose and isinstance(src, str) and isinstance(dst_workflow, str):
-                print("{} -> {}".format(src, dst_workflow))
-            text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
+                print("{} -> \n {}".format(src, "\n ".join([dst_workflow])))
+            """
+            
+            #text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
 
             for i, line in enumerate(text):
                 problem = '%~dp0'
@@ -1176,14 +1292,23 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             if githubdata.setup_msys2:
                 steps.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
 
+            for name in defnames_ordered(defs, thens):
+                text = filter_empty_lines(render_one(name, defs, thens, opts, src_name, echo_off = False, warning = False))
+                #print(text)
+                step = GithubShellStep(text, shells[name], name)
+                #print("shells[name]", shells[name])
+                steps.append(make_github_step(step, opts, githubdata))
+
+            """
             if "\n".join(text).strip() != '':
                 steps.append(make_main_step(text, os.path.splitext(src_name)[0], local=False))
+            """
 
             """
             if len(githubdata.msys2) > 0:
                 steps.append(make_msys2_step(githubdata.msys2, opts))
             """
-
+            
             for step in githubdata.steps:
                 steps.append(make_github_step(step, opts))
 
@@ -1193,11 +1318,27 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             if len(githubdata.release) > 0:
                 steps.append(make_release_step(githubdata.release))
 
-            save_workflow(dst_workflow, steps, opts.github_on, opts.github_image, githubdata.matrix)
+            save_workflow(dst_workflow, steps, opts, githubdata)
+            dst_paths.append(dst_workflow)
         else:
+
+            text, files = render_local_main(defs, thens, shells, opts, src_name, echo_off, warning)
+
+            
+            for file_name, file_content in files:
+                dst_path = os.path.join(os.path.dirname(src), file_name)
+                #print("dst_path", dst_path)
+                """
+                with open(dst_path, 'w', encoding='utf=8') as f:
+                    f.write(file_content)
+                """
+                write(dst_path, file_content)
+                dst_paths.append(dst_path)
+
+            """
             if verbose and isinstance(src, str) and isinstance(dst_bat, str):
-                print("{} -> {}".format(src, dst_bat))
-            text = render(defs, thens, opts, src_name, echo_off, warning)
+                print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
+            """
 
             if githubdata.matrix:
                 for key, values in githubdata.matrix.items():
@@ -1210,6 +1351,10 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
 
             #write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
             write(dst_bat, text)
+            dst_paths.append(dst_bat)
+
+    if verbose and isinstance(src, str) and isinstance(dst_bat, str):
+        print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
 
     #print("dst_bat", dst_bat)
     #print("dst_workflow", dst_workflow)
