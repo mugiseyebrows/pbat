@@ -5,8 +5,6 @@ import random
 import textwrap
 import yaml
 
-# todo exception if %~dp0 and opts.github
-
 try:
     from .parseargs import parse_args
 except ImportError:
@@ -19,6 +17,74 @@ WINDOWS_2019 = "windows-2019"
 WINDOWS_2022 = "windows-2022"
 WINDOWS_LATEST = "windows-latest"
 CHECKSUM_ALGS = ['b2','md5','sha1','sha224','sha256','sha384','sha512']
+
+@dataclass
+class Opts:
+    debug: bool = False
+    clean: bool = False
+    curl_in_path: bool = False
+    curl_user_agent: str = None
+    curl_proxy: str = None
+    download_test: bool = True
+    unzip_test: bool = True
+    zip_test: bool = True
+    github: bool = False
+    zip_in_path = False
+    git_in_path = False
+    patch_in_path = False
+    github_workflow = False
+    github_image: str = WINDOWS_LATEST
+    github_on: int = ON_PUSH
+    msys2_msystem: str = 'MINGW64'
+
+@dataclass
+class GitHubDataUpload:
+    name: str = None
+    path: list = field(default_factory=list)
+
+@dataclass
+class GitHubDataSetupMsys2:
+    msystem: str = None
+    install: str = None
+    update: bool = True
+
+(
+    SHELL_CMD,
+    SHELL_MSYS2,
+) = range(2)
+
+@dataclass
+class GithubShellStep:
+    run: str = None
+    shell: int = SHELL_CMD
+    name: str = None
+    
+@dataclass
+class GitHubData:
+    checkout: bool = False
+    release: list = field(default_factory=list)
+    upload: GitHubDataUpload = None
+    matrix: dict = field(default_factory=dict)
+    setup_msys2: GitHubDataSetupMsys2 = None
+    steps: list = field(default_factory=list)
+
+MACRO_NAMES = [
+    'pushd_cd', 'popd_cd', 
+    'find_app',
+    'download', 
+    'zip', 'unzip',
+    'set_path', 
+    'copy_file', 'copy_dir', 'mkdir', 'rmdir', 
+    'git_clone', 'git_pull', 'patch', 
+    'github_matrix', 'github_checkout', 'github_upload', 'github_release', 'github_setup_msys2', 'github_run',
+    'if_arg', 
+    'log', 
+    'where',
+    'clean_dir', 'clean_file', 
+    'set_var',
+    'substr', 
+    'use_tool', 'install_tool', 'call_vcvars'
+]
 
 def get_dst_bat(src):
     dirname = os.path.dirname(src)
@@ -55,13 +121,13 @@ def make_release_step(artifacts):
         }
     }
 
-def make_upload_step(name, artifacts):
+def make_upload_step(data: GitHubDataUpload):
     return {
         "name": "upload",
         "uses": "actions/upload-artifact@v3",
         "with": {
-            "name": name,
-            "path": str_or_literal(artifacts)
+            "name": data.name,
+            "path": str_or_literal(data.path)
         }
     }
 
@@ -86,108 +152,39 @@ def save_workflow(path, steps, on = ON_TAG, runs_on = WINDOWS_2019, matrix = Non
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
-MACRO_NAMES = ['find_app', 'find_file', 'download', 'download2', 'unzip', 'mkdir', 'rmdir', 'log', 'where',
-'find_app2', 'clean_dir', 'clean_file', 'find_app3', 'zip', 'git_clone', 'git_pull', 'set_path', 'set_var',
-'if_arg', 'patch', 'github_matrix', 'pushd_cd', 'popd_cd',
-'copy_dir', 'use_tool', 'install_tool', 'call_vcvars', 'github_checkout', 'github_release', 'github_upload']
+def make_setup_msys2_step(data: GitHubDataSetupMsys2, opts: Opts):
+    if data.msystem:
+        msystem = data.msystem
+    else:
+        msystem = opts.msys2_msystem
+    obj = {
+        "name": "setup-msys2",
+        "uses": "msys2/setup-msys2@v2",
+        "with": {
+            "msystem": msystem,
+        }
+    }
+    if data.install:
+        obj["with"]["install"] = data.install
+    if data.update is not None:
+        obj["with"]["update"] = data.update
+    return obj
 
-"""
-class Data:
-    def __init__(self) -> None:
-        self.arg = ''
-        self.res = []
-        self.array = []
-        self.in_array = False
-        self.in_str = False
-        self.ignore_comma = False
+def make_github_step(step: GithubShellStep, opts: Opts):
 
-    def flush_arg(self):
-        if self.in_array:
-            self.array.append(unquoted(self.arg))
-            self.arg = ''
-        else:
-            self.res.append(unquoted(self.arg))
-            self.arg = ''
+    obj = dict()
 
-    def begin_array(self):
-        self.in_array = True
+    if step.name:
+        obj["name"] = step.name
 
-    def end_array(self):
-        self.flush_arg()
-        self.res.append(self.array)
-        self.array = []
-        self.in_array = False
-        self.ignore_comma = True
+    obj["shell"] = {SHELL_CMD: "cmd", SHELL_MSYS2: "msys2 {0}"}[step.shell]
+    
+    if step.shell == SHELL_MSYS2:
+        obj["env"] = {"MSYSTEM": opts.msys2_msystem, "CHERE_INVOKING": 'yes'}
+    
+    obj["run"] = str_or_literal([step.run])
 
-    def comma(self):
-        if self.in_str:
-            self.arg += ','
-        elif self.ignore_comma:
-            self.ignore_comma = False
-        else:
-            self.flush_arg()
-
-    def quotes(self):
-        self.in_str = not self.in_str
-
-    def char(self, c):
-        self.arg += c
-"""
-
-@dataclass
-class Opts:
-    debug: bool = False
-    clean: bool = False
-    curl_in_path: bool = False
-    curl_user_agent: str = None
-    curl_proxy: str = None
-    download_test: bool = True
-    unzip_test: bool = True
-    zip_test: bool = True
-    github: bool = False
-    zip_in_path = False
-    git_in_path = False
-    patch_in_path = False
-    github_workflow = False
-    github_image: str = WINDOWS_LATEST
-    github_on: int = ON_PUSH
-
-@dataclass
-class GitHubData:
-    checkout: bool = False
-    release: list = field(default_factory=list)
-    upload: list = field(default_factory=list)
-    matrix: dict = field(default_factory=dict)
-
-"""
-def parse_args(s):
-    data = Data()
-    for c in s:
-        if c == '[':
-            data.begin_array()
-        elif c == ']':
-            data.end_array()
-        elif c == ',':
-            data.comma()
-        elif c == '"':
-            data.quotes()
-        else:
-            data.char(c)
-    data.comma()
-    return data.res
-
-
-def test_parse_args():
-    s = "[foo, bar, \"baz\"], qix"
-    r = parse_args(s)
-    assert r == [["foo","bar","baz"],"qix"]
-    s = "[foo, bar, \"baz\"]"
-    r = parse_args(s)
-    assert r == [["foo","bar","baz"]]
-    s = "foo, \"bar, baz\""
-    r = parse_args(s)
-    assert r == [["foo","bar, baz"]]
-"""
+    return obj
 
 def count_parenthesis(line):
     op = 0
@@ -310,6 +307,19 @@ def read(src):
             if hasattr(opts, name):
                 setattr(opts, name, m.group(2) in ['on','true','1'])
                 continue
+        
+        ID = "([0-9a-z_]+)"
+        SPACE = "\\s*"
+        START = "^\\s*"
+        END = "\\s*$"
+
+        def pattern_join(*args):
+            return "".join(args)
+
+        m = re.match(pattern_join(START, 'msys2[_-]msystem', SPACE, ID, END), line, re.IGNORECASE)
+        if m:
+            opts.msys2_msystem = m.group(1).strip()
+            continue
 
         m = re.match('^\\s*github[-_]image\\s+(.*)$', line)
         if m:
@@ -394,7 +404,7 @@ def read(src):
                 print("missing def {}".format(n2))
     
     if 'download' in used and not opts.curl_in_path:
-        defs['main'] = ['CURL = find_app([C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe])\n'] + defs['main']
+        defs['main'] = ['CURL = find_app([C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe])\n'] + defs['main']
     if ('zip' in used or 'unzip' in used) and not opts.zip_in_path:
         defs['main'] = ['P7Z = find_app([C:\\Program Files\\7-Zip\\7z.exe])\n'] + defs['main']
     if 'git_clone' in used and not opts.git_in_path:
@@ -440,12 +450,6 @@ def find_app(name, items, label):
     label_success = "{}_find_app_found".format(name)
     tests = ["if exist \"{}\" goto {}\n".format(item, label_success) for item in items]
     puts = ["if exist \"{}\" set PATH={};%PATH%\n".format(item, os.path.dirname(item)) for item in items]
-    return "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_success + "\n" + "".join(puts)
-
-def find_file(name, items, label):
-    label_success = "{}_find_app_found".format(name)
-    tests = ["if exist \"{}\" goto {}\n".format(item, label_success) for item in items]
-    puts = []
     return "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_success + "\n" + "".join(puts)
 
 def without(vs, v):
@@ -549,12 +553,13 @@ def remove_redundant_gotos(res):
     return changed
 
 def validate_args(fnname, args, kwargs, ret, argmin, argmax, kwnames, needret = False):
-    if not (argmin <= len(args) <= argmax):
-        if argmin == argmax:
-            nargs = str(argmin)
-        else:
-            nargs = "{} to {}".format(argmin, argmax)
-        raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
+    if argmin > -1 and argmax > -1:
+        if not (argmin <= len(args) <= argmax):
+            if argmin == argmax:
+                nargs = str(argmin)
+            else:
+                nargs = "{} to {}".format(argmin, argmax)
+            raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
     for n in kwargs:
         if n not in kwnames:
             raise Exception("{} unknown option {}".format(fnname, n))
@@ -667,25 +672,6 @@ exit /b
 )
 """.format(sum_var, quoted(sum_file), quoted(dest), sum_alg, quoted(dest))
 
-    return exp, clean_exp
-
-def macro_download2(name, args, kwargs, ret, opts, checksums):
-    url = args[0]
-    dest = args[1]
-    keep = "keep" in args
-    if dest not in checksums:
-        print("cant find {} in checksums, validation skipped".format(dest))
-        return macro_download(name, args, kwargs, ret, opts)
-    if keep:
-        clean_exp = ""
-    else:
-        clean_exp = macro_clean_file(None, [dest], opts)
-    exp = """if not exist \"{}\" (
-\"%CURL%\" -L -o \"{}\" {}
-call :verify_checksum_sha1 \"{}\" {}
-if errorlevel 1 exit /b 1
-)
-""".format(dest, dest, url, dest, checksums[dest], dest)
     return exp, clean_exp
 
 def kwarg_value(kwargs, *names):
@@ -862,7 +848,13 @@ def macro_set_var(name, args, kwargs, ret, opts):
     else:
         return "set {}={}\n".format(n,v)
 
+def macro_copy_file(name, args, kwargs, ret, opts):
+    validate_args("copy_file", args, kwargs, ret, 2, 2, set(), False)
+    src, dst = args
+    return "copy /y {} {}\n".format(quoted(src), quoted(dst))
+
 def macro_copy_dir(name, args, kwargs, ret, opts):
+    validate_args("copy_dir", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "xcopy /s /q /y /i {} {}\n".format(quoted(src), quoted(dst))
 
@@ -972,13 +964,48 @@ def macro_github_checkout(name, args, kwargs, ret, opts, githubdata: GitHubData)
     return ''
 
 def macro_github_upload(name, args, kwargs, ret, opts, githubdata: GitHubData):
-    githubdata.upload = args
+    validate_args("github_upload", args, kwargs, ret, 1, 1, {"n", "name"})
+    arg = args[0]
+    if isinstance(arg, list):
+        path = arg
+    else:
+        path = [arg]
+    name = kwarg_value(kwargs, "n", "name")
+    if name is None:
+        name = os.path.splitext(os.path.basename(path[0]))[0]
+    githubdata.upload = GitHubDataUpload(name, path)
     return ''
 
 def macro_github_matrix(name, args, kwargs, ret, opts, githubdata: GitHubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
     githubdata.matrix[ret] = args[0]
     #print("macro_github_matrix", githubdata.matrix)
+    #print("macro_github_matrix", ret, githubdata.matrix)
+    return ''
+
+def macro_github_setup_msys2(name, args, kwargs, ret, opts, githubdata: GitHubData):
+    validate_args("setup_msys2", args, kwargs, ret, 0, 0, {"m", "msystem", "i", "install", "u", "update"})
+    msystem = kwarg_value(kwargs, "m", "msystem")
+    install = kwarg_value(kwargs, "i", "install")
+    update = kwarg_value(kwargs, "u", "update")
+    if update is not None:
+        update = {"false":False, "true":True}[update]
+    githubdata.setup_msys2 = GitHubDataSetupMsys2(msystem, install, update)
+    return ''
+
+def macro_github_run(name, args, kwargs, ret, opts, githubdata: GitHubData):
+    validate_args("github_run", args, kwargs, ret, -1, -1, {"s", "shell", "n", "name"})
+    print(args)
+    run = " ".join(args)
+    shell = SHELL_CMD
+    arg_shell = kwarg_value(kwargs, "s", "shell")
+    name = kwarg_value(kwargs, "n", "name")
+    if arg_shell:
+        shell = {
+            "cmd": SHELL_CMD,
+            "msys2": SHELL_MSYS2,
+        }[arg_shell]
+    githubdata.steps.append(GithubShellStep(run, shell, name))
     return ''
 
 def macro_pushd_cd(name, args, kwargs, ret, opts):
@@ -991,6 +1018,19 @@ def macro_popd_cd(name, args, kwargs, ret, opts):
         return ''
     return 'popd\n'
 
+def macro_substr(name, args, kwargs, ret, opts):
+    validate_args("substr", args, kwargs, ret, 2, 3, {}, True)
+    stop = None
+    if len(args) == 3:
+        varname, start, stop = args
+    elif len(args) == 2:
+        varname, start, _ = args
+    if stop:
+        ixs = "{},{}".format(start, stop)
+    else:
+        ixs = stop
+    return 'set {}=%{}:~{}%\n'.format(ret, varname, ixs)
+    
 def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
 
     if 'clean' not in defs:
@@ -1022,8 +1062,7 @@ def expand_macros(defs, thens, opts, checksums, githubdata: GitHubData):
                     continue
     defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
 
-def write(path, defs, thens, opts, src_name, echo_off, warning):
-    text = render(defs, thens, opts, src_name, echo_off, warning)
+def write(path, text):
     if isinstance(path, str):
         with open(path, 'w', encoding='cp866') as f:
             f.write(text)
@@ -1085,14 +1124,14 @@ class Dumper(yaml.Dumper):
         cls.yaml_implicit_resolvers['o'] = []
 
 
-def pack_step(cmds, name, local):
+def make_main_step(cmds, name, local):
     if local:
         return "rem {}\n".format(name) + "\n".join(cmds) + "\n"
     else:
         return {
             "name": name, 
             "shell": "cmd", 
-            "run": literal_str("\n".join(cmds) + "\n")
+            "run": str_or_literal(cmds)
         }
 
 def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
@@ -1125,27 +1164,52 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 print("{} -> {}".format(src, dst_workflow))
             text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
 
-            if githubdata.matrix:
-                for i, line in enumerate(text):
-                    for key, values in githubdata.matrix.items():
-                        text[i] = text[i].replace(values[0], "${{ matrix." + key + " }}")
+            for i, line in enumerate(text):
+                problem = '%~dp0'
+                if problem in line:
+                    raise Exception("{} does not work on github actions use %CD%, line {}".format(problem, line))
 
-            build_step = pack_step(text, os.path.splitext(src_name)[0], local=False)
             steps = []
             if githubdata.checkout:
                 steps.append({"uses": "actions/checkout@v3", "name": "checkout"})
-            steps.append(build_step)
-            if len(githubdata.upload) > 0:
-                name = githubdata.upload[0]
-                artifacts = githubdata.upload[1:]
-                steps.append(make_upload_step(name, artifacts))
+
+            if githubdata.setup_msys2:
+                steps.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
+
+            if "\n".join(text).strip() != '':
+                steps.append(make_main_step(text, os.path.splitext(src_name)[0], local=False))
+
+            """
+            if len(githubdata.msys2) > 0:
+                steps.append(make_msys2_step(githubdata.msys2, opts))
+            """
+
+            for step in githubdata.steps:
+                steps.append(make_github_step(step, opts))
+
+            if githubdata.upload:
+                steps.append(make_upload_step(githubdata.upload))
+
             if len(githubdata.release) > 0:
                 steps.append(make_release_step(githubdata.release))
+
             save_workflow(dst_workflow, steps, opts.github_on, opts.github_image, githubdata.matrix)
         else:
             if verbose and isinstance(src, str) and isinstance(dst_bat, str):
                 print("{} -> {}".format(src, dst_bat))
-            write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
+            text = render(defs, thens, opts, src_name, echo_off, warning)
+
+            if githubdata.matrix:
+                for key, values in githubdata.matrix.items():
+                    #text[i] = text[i].replace(values[0], "${{ matrix." + key + " }}")
+                    pattern = '[$][{][{]\\s*' + 'matrix.' + key + '\\s*[}][}]'
+                    #print(pattern)
+                    #print(">{}<".format(key))
+                    
+                    text = re.sub(pattern, values[0], text)
+
+            #write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
+            write(dst_bat, text)
 
     #print("dst_bat", dst_bat)
     #print("dst_workflow", dst_workflow)
