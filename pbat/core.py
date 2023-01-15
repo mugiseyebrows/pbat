@@ -5,13 +5,13 @@ import random
 import textwrap
 import yaml
 
-# todo shell python
+# todo shell python bash pwsh
 
 try:
-    from .parsemacro import parse_macro
+    from .parsemacro import parse_macro, ParseMacroError
     from .parsedef import parse_def
 except ImportError:
-    from parsemacro import parse_macro
+    from parsemacro import parse_macro, ParseMacroError
     from parsedef import parse_def
 
 ON_PUSH = 1
@@ -72,6 +72,11 @@ class GitHubData:
     setup_msys2: GitHubDataSetupMsys2 = None
     steps: list = field(default_factory=list)
 
+@dataclass
+class Ctx:
+    github: bool
+    shell: str
+
 MACRO_NAMES = [
     'pushd_cd', 'popd_cd', 
     'find_app',
@@ -117,11 +122,10 @@ def str_or_literal(items):
 def make_release_step(artifacts):
     return {
         "name": "release",
-        "uses": "ncipollo/release-action@v1",
+        "uses": "softprops/action-gh-release@v1",
         "if": "startsWith(github.ref, 'refs/tags/')",
         "with": {
-            "artifacts": str_or_literal(artifacts),
-            "token": "${{ secrets.GITHUB_TOKEN }}"
+            "files": str_or_literal(artifacts)
         }
     }
 
@@ -248,7 +252,7 @@ def read(src, github):
 
     def process_line(line, cwd):
         m = re.match('^include\\s+(.*[.]pbat)$', line)
-        if m is not None:
+        if m:
             path = os.path.join(cwd, m.group(1))
             with open(path, encoding='utf-8') as f_:
                 for line in f_.readlines():
@@ -290,7 +294,7 @@ def read(src, github):
             tot += (op - cl)
             if tot == 0:
                 break
-        return " ".join([line.strip() for line in res]) + "\n"
+        return " ".join(res) + "\n"
 
     used = set()
     chksum_used = set()
@@ -329,8 +333,8 @@ def read(src, github):
 
     name = None
     for i, line in enumerate(lines):
-        line = line.strip()
-        m = re.match('^(debug|clean|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)$', line)
+        #line = line.strip()
+        m = re.match('^\\s*(debug|clean|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
         if m is not None:
             setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
             continue
@@ -471,6 +475,29 @@ def read(src, github):
                 'MSYS2 = find_app([C:\\msys64\\usr\\bin\\bash.exe])\n',
                 'set_var(CHERE_INVOKING, yes)\n'
             ] + defs['main']
+    if 'python' in shells.values():
+        if github:
+            pass
+        else:
+            defs['main'] = ["""PYTHON = find_app([
+    %LOCALAPPDATA%\\Programs\\Python\\Python39\\python.exe,
+    C:\\Python39\\python.exe,
+    %LOCALAPPDATA%\\Programs\\Python\\Python310\\python.exe,
+    C:\\Python310\\python.exe,
+    %LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe,
+    C:\\Python311\\python.exe,
+    C:\\Miniconda3\\python.exe,
+    %USERPROFILE%\\Miniconda3\\python.exe,
+    C:\\Anaconda3\\python.exe,
+    %USERPROFILE%\\Anaconda3\\python.exe
+])
+"""] + defs['main']
+
+    if 'pwsh' in shells.values():
+        if github:
+            pass
+        else:
+            defs['main'] = ["PWSH = find_app([C:\\Program Files\\PowerShell\\7\\pwsh.exe])\n"] + defs['main']
 
     for alg in chksum_used:
         exe = alg + 'sum.exe'
@@ -493,18 +520,21 @@ def insert_deps(names, deps):
     #print('after insert:', res)
     return res
 
-
+"""
 def unquoted(s):
     s = s.strip()
     if s.startswith('"') and s.endswith('"'):
         return s[1:-1]
     return s
+"""
 
+"""
 def parse_array(s):
     m = re.search("\[(.*)\]",s)
     if m is not None:
         items = [unquoted(e.strip()) for e in m.group(1).split(",")]
         return items
+"""
 
 def find_app(name, items, label):
     label_success = "{}_find_app_found".format(name)
@@ -550,6 +580,13 @@ def render_one(name, defs, thens, opts: Opts, src_name, echo_off=True, warning=T
 
     return "".join(res)
 
+def dedent(text):
+    def d(line):
+        if line.startswith('    '):
+            line = line[4:]
+        return line
+    return "\n".join([d(line) for line in text.split('\n') if line.strip() != ''])
+
 def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
 
@@ -577,16 +614,39 @@ def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, 
         if opts.debug:
             res.append("echo {}\n".format(name))
             res.append(macro_log(name, [name]))
-
-        if shells[name] == 'cmd':
+        shell = shells[name]
+        if shell == 'cmd':
             res.append("".join(lines))
-        elif shells[name] == 'msys2':
-            file_name = "{}_{}.sh".format(os.path.splitext(src_name)[0], name)
-            file_content = "#!/bin/bash\n" + "".join(lines) + "\n"
+        elif shell in ['msys2', 'python', 'pwsh']:
+
+            if shell == 'msys2':
+                ext = '.sh'
+                file_content = "#!/bin/bash\n" + "".join(lines) + "\n"
+            elif shell == 'python':
+                ext = '.py'
+                file_content = "".join(lines) + "\n"
+            elif shell == 'pwsh':
+                ext = '.ps1'
+                file_content = "".join(lines) + "\n"
+
+            #file_content = dedent(file_content)
+            
+            file_name = "{}-{}{}".format(os.path.splitext(src_name)[0], name, ext)
+
+            if shell == 'msys2':
+                res.append('"%MSYS2%" %~dp0{}\n'.format(file_name))
+            elif shell == 'python':
+                res.append('"%PYTHON%" %~dp0{}\n'.format(file_name))
+            elif shell == 'pwsh':
+                res.append('"%PWSH%" %~dp0{}\n'.format(file_name))
+            
             files.append((file_name, file_content))
+
+            #print(files)
+
             if opts.msys2_msystem:
                 res.append("set MSYSTEM={}\n".format(opts.msys2_msystem))
-            res.append('"%MSYS2%" {}\n'.format(file_name))
+
         else:
             raise Exception('unknown shell {}'.format(shells[name]))
 
@@ -837,17 +897,45 @@ def macro_unzip(name, args, kwargs, ret, opts):
     return exp, clean_exp
 
 def macro_zip(name, args, kwargs, ret, opts):
+
+    COMPRESSION_MODE = {
+        "-mx0": "copy",
+        "-mx1": "fastest",
+        "-mx3": "fast",
+        "-mx5": "normal",
+        "-mx7": "maximum",
+        "-mx9": "ultra"
+    }
+    kwnames = list(COMPRESSION_MODE.values()) + ["lzma"]
+
+    validate_args("zip", args, kwargs, ret, 2, 2, kwnames, False)
+
     src, dst = args
+    if opts.zip_in_path:
+        zip = '7z'
+    else:
+        zip = '"%P7Z%"'
+
     if opts.zip_in_path:
         cmd = '7z'
     else:
         cmd = '"%P7Z%"'
-    cmd = cmd + ' a -y {} {}\n'.format(quoted(dst), quoted(src))
-    test = "if not exist {}".format(quoted(dst))
+    #cmd = cmd + ' a -y {} {}\n'.format(quoted(dst), quoted(src))
+    flags = ['-y']
+    if kwarg_value(kwargs, "lzma"):
+        flags.append('-m0=lzma2')
+    for flag, mode in COMPRESSION_MODE.items():
+        if kwarg_value(kwargs, mode):
+            flags.append(flag)
+            break
+
+    test = []
     if opts.zip_test:
-        return test + ' ' + cmd
-    else:
-        return cmd
+        test = ['if not exist', quoted(dst)]
+
+    cmd = test + [zip, 'a'] + flags + [quoted(dst), quoted(src)]
+
+    return " ".join(cmd) + "\n"
 
 def macro_patch(name, args, kwargs, ret, opts: Opts):
     validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p", "strip"})
@@ -1051,7 +1139,7 @@ def macro_call_vcvars(name, args, kwargs, ret, opts):
         return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
 
 def macro_untar(name, args, kwargs, ret, opts):
-    print(args)
+    #print(args)
     return ''
 
 def macro_where(name, args, kwargs, ret, opts):
@@ -1105,7 +1193,7 @@ def macro_github_setup_msys2(name, args, kwargs, ret, opts, githubdata: GitHubDa
 
 def macro_github_run(name, args, kwargs, ret, opts, githubdata: GitHubData):
     validate_args("github_run", args, kwargs, ret, -1, -1, {"s", "shell", "n", "name"})
-    print(args)
+    #print(args)
     run = " ".join(args)
     shell = SHELL_CMD
     arg_shell = kwarg_value(kwargs, "s", "shell")
@@ -1141,6 +1229,16 @@ def macro_substr(name, args, kwargs, ret, opts):
         ixs = stop
     return 'set {}=%{}:~{}%\n'.format(ret, varname, ixs)
     
+def maybe_macro(line):
+    if '(' not in line:
+        return False
+    if ')' not in line:
+        return False
+    for n in MACRO_NAMES:
+        if n in line:
+            return True
+    return False
+    
 def expand_macros(defs, thens, opts, githubdata: GitHubData):
 
     if 'clean' not in defs:
@@ -1148,6 +1246,22 @@ def expand_macros(defs, thens, opts, githubdata: GitHubData):
 
     for name in defs.keys():
         for i, line in enumerate(defs[name]):
+            if maybe_macro(line):
+                try:
+                    ret, macroname, args, kwargs = parse_macro(line)
+                    if macroname.split("_")[0] == 'github':
+                        exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, githubdata)
+                    elif macroname in ['download', 'unzip']:
+                        exp, clean_exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts)
+                    else:
+                        exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts)
+                    ws = re.match("(\\s*)", line).group(1)
+                    defs[name][i] = ws + exp
+                    continue
+                except ParseMacroError as e:
+                    pass
+
+            """
             for n in MACRO_NAMES:
                 m = re.match('(.*=)?\\s*' + n + '\\s*\((.*)\)$', line)
                 if m is not None:
@@ -1167,6 +1281,7 @@ def expand_macros(defs, thens, opts, githubdata: GitHubData):
                     else:
                         defs[name][i] = exp
                     continue
+            """
 
     if len(defs['clean']) > 0:
         defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
@@ -1216,7 +1331,7 @@ def is_empty_def(def_):
         return True
     for line in def_:
         if line.strip() != "":
-            print(line)
+            #print(line)
             return False
     return True
 
@@ -1247,6 +1362,14 @@ def defnames_ordered(defs, thens):
 
 def filter_empty_lines(text):
     return "\n".join([l for l in text.split('\n') if l.strip() != ''])
+
+def insert_matrix_values(text, matrix):
+    if len(matrix) == 0:
+        return text
+    for key, values in matrix.items():
+        pattern = '[$][{][{]\\s*' + 'matrix.' + key + '\\s*[}][}]'
+        text = re.sub(pattern, values[0], text)
+    return text
 
 def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
 
@@ -1332,6 +1455,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 with open(dst_path, 'w', encoding='utf=8') as f:
                     f.write(file_content)
                 """
+                file_content = dedent(insert_matrix_values(file_content, githubdata.matrix))
+
+
                 write(dst_path, file_content)
                 dst_paths.append(dst_path)
 
@@ -1340,6 +1466,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
             """
 
+            text = dedent(insert_matrix_values(text, githubdata.matrix))
+
+            """
             if githubdata.matrix:
                 for key, values in githubdata.matrix.items():
                     #text[i] = text[i].replace(values[0], "${{ matrix." + key + " }}")
@@ -1348,6 +1477,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                     #print(">{}<".format(key))
                     
                     text = re.sub(pattern, values[0], text)
+            """
 
             #write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
             write(dst_bat, text)

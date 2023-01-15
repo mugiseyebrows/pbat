@@ -1,5 +1,6 @@
 import os
 from lark import Lark, Tree, Token
+from lark.exceptions import LarkError
 import unittest
 
 base = os.path.dirname(__file__)
@@ -41,8 +42,15 @@ def parse_parg(tree):
     for item in find_data(tree, 'list'):
         return parse_list(item)
 
+class ParseMacroError(Exception):
+    pass
+
 def parse_macro(s):
-    tree = parser.parse(s)
+
+    try:
+        tree = parser.parse(s)
+    except LarkError as e:
+        raise ParseMacroError(e)
 
     ret_name = None
     fn_name = None
