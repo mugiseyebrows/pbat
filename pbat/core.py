@@ -782,14 +782,14 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     url = args[0]
     dest = args[1]
 
+    shell = ctx.shell
+
     force = kwargs.get('force')
     keep = kwargs.get('keep')
-    if opts.curl_in_path:
+    if opts.curl_in_path or shell =='msys2':
         curl = "curl"
     else:
         curl = '"%CURL%"'
-
-    #print("opts.curl_user_agent", opts.curl_user_agent)
 
     user_agent = ""
     if opts.curl_user_agent is not None:
@@ -808,18 +808,22 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     is_wget = False
     is_curl = True
 
-    test = "if not exist {}".format(quoted(dest))
-
     if is_curl:
         cmd = " ".join([e for e in [curl,'-L', proxy, user_agent,'-o',quoted(dest), quoted(url)] if e != ""]) + "\n"
     elif is_wget:
         wget = "C:\\msys64\\usr\\bin\\wget.exe"
         cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
 
-    if force or opts.download_test == False:
+    if force or opts.download_test == False or ctx.github:
         exp = cmd
     else:
-        exp = test + " " + cmd
+        if shell == 'cmd':
+            exp = "if not exist {} {}\n".format(quoted(dest), cmd)
+        elif shell == 'msys2':
+            exp = "if [ -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
+        else:
+            raise Exception("download not implemented for shell {}".format(shell))
+
     if keep:
         clean_exp = ""
     else:
@@ -1163,11 +1167,11 @@ def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitH
 
 def macro_github_release(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     githubdata.release = args
-    return ''
+    return '\n'
 
 def macro_github_checkout(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     githubdata.checkout = True
-    return ''
+    return '\n'
 
 def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     validate_args("github_upload", args, kwargs, ret, 1, 1, {"n", "name"})
@@ -1180,12 +1184,12 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
     if name is None:
         name = os.path.splitext(os.path.basename(path[0]))[0]
     githubdata.upload = GithubUpload(name, path)
-    return ''
+    return '\n'
 
 def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
     githubdata.matrix[ret] = args[0]
-    return ''
+    return '\n'
 
 def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     validate_args("setup_msys2", args, kwargs, ret, 0, 0, {"m", "msystem", "i", "install", "u", "update"})
@@ -1205,12 +1209,12 @@ def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githu
 
 def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     if ctx.github:
-        return ''
+        return '\n'
     return 'pushd %~dp0\n'
 
 def macro_popd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     if ctx.github:
-        return ''
+        return '\n'
     return 'popd\n'
 
 def macro_substr(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
@@ -1236,7 +1240,7 @@ def maybe_macro(line):
             return True
     return False
     
-def expand_macros(defs, thens, shells, github, opts: Opts, githubdata: GitHubData):
+def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GitHubData):
 
     if 'clean' not in defs:
         defs['clean'] = []
