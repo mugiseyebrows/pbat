@@ -432,14 +432,7 @@ def read(src, github):
             #print("line {} def {} depends on {} then {} shell {}".format(i, name, deps_, then, shell))
             
             continue
-        """
-        m = re.match('^def\\s+([a-z0-9_]+)$', line)
-        if m is not None:
-            name = m.group(1)
-            defs[name] = []
-            thens[name] = "end"
-            continue
-        """
+        
         # todo calculate order after parse
         m = re.match('^\\s*order\\s+(.*)$', line)
         if m is not None:
@@ -456,19 +449,6 @@ def read(src, github):
 
         if name is not None:
             defs[name].append(line + "\n")
-
-
-    """
-    for k, v in thens.items():
-        m = re.match('next\((.*)\)', v)
-        if m is not None:
-            n = m.group(1).strip()
-            if n in thens:
-                thens[k] = thens[n]
-                #print("{} is {}".format(v, thens[n]))
-            else:
-                print("cannot expand {}".format(v))
-    """
 
     for n1, n2 in thens.items():
         if n1 not in defs:
@@ -545,22 +525,6 @@ def insert_deps(names, deps):
     #print('before insert:', names)
     #print('after insert:', res)
     return res
-
-"""
-def unquoted(s):
-    s = s.strip()
-    if s.startswith('"') and s.endswith('"'):
-        return s[1:-1]
-    return s
-"""
-
-"""
-def parse_array(s):
-    m = re.search("\[(.*)\]",s)
-    if m is not None:
-        items = [unquoted(e.strip()) for e in m.group(1).split(",")]
-        return items
-"""
 
 def find_app(name, items, label):
     label_success = "{}_find_app_found".format(name)
@@ -923,18 +887,8 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHu
         clean_exp = ""
     else:
         #print(os.path.splitext(src)[1])
-
         # todo optional clean
-        """
-        guess_dest = os.path.splitext(src)[0]
-        is_file = os.path.splitext(guess_dest)[1] in ['.tar', '.lzma', '.gz', '.zip']
-        if is_file:
-            clean_exp = macro_clean_file(None, [guess_dest], {}, None, opts)
-        else:
-            #clean_exp = "if exist \"{}\" ".format(guess_dest) + macro_clean_dir(None, [guess_dest])
-            clean_exp = macro_clean_dir(None, [guess_dest], {}, None, opts)
-        """
-
+        clean_exp = ""
     return exp, clean_exp
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
@@ -1231,8 +1185,6 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
 def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
     githubdata.matrix[ret] = args[0]
-    #print("macro_github_matrix", githubdata.matrix)
-    #print("macro_github_matrix", ret, githubdata.matrix)
     return ''
 
 def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
@@ -1250,23 +1202,6 @@ def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githu
     node_version = args[0]
     githubdata.setup_node = GithubSetupNode(node_version)
     return '\n'
-
-"""
-def macro_github_run(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
-    validate_args("github_run", args, kwargs, ret, -1, -1, {"s", "shell", "n", "name"})
-    #print(args)
-    run = " ".join(args)
-    shell = SHELL_CMD
-    arg_shell = kwarg_value(kwargs, "s", "shell")
-    name = kwarg_value(kwargs, "n", "name")
-    if arg_shell:
-        shell = {
-            "cmd": SHELL_CMD,
-            "msys2": SHELL_MSYS2,
-        }[arg_shell]
-    githubdata.steps.append(GithubShellStep(run, shell, name))
-    return ''
-"""
 
 def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
     if ctx.github:
@@ -1326,28 +1261,6 @@ def expand_macros(defs, thens, shells, github, opts: Opts, githubdata: GitHubDat
                 except ParseMacroError as e:
                     pass
 
-            """
-            for n in MACRO_NAMES:
-                m = re.match('(.*=)?\\s*' + n + '\\s*\((.*)\)$', line)
-                if m is not None:
-                    ret, name_, args, kwargs = parse_macro(line)
-
-                    if n.split("_")[0] == 'github':
-                        exp = globals()['macro_' + n](name, args, kwargs, ret, opts, githubdata)
-                    elif n in ['download', 'unzip']:
-                        exp, clean_exp = globals()['macro_' + n](name, args, kwargs, ret, opts)
-                        defs['clean'].append(clean_exp)
-                    else:
-                        exp = globals()['macro_' + n](name, args, kwargs, ret, opts)
-
-                    if n in ['clean_dir', 'clean_file']:
-                        defs[name][i] = ""
-                        defs['clean'].append(exp)
-                    else:
-                        defs[name][i] = exp
-                    continue
-            """
-
     if len(defs['clean']) > 0:
         defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
     else:
@@ -1362,15 +1275,6 @@ def write(path, text):
         path.write(text)
 
 used_ids = set()
-
-def create_id():
-    alph0 = 'abcdefghijklmnopqrstuvwxyz'
-    alph1 = 'abcdefghijklmnopqrstuvwxyz0123456789'
-    id_ = None
-    while id_ is None or id_ in used_ids:
-        id_ = "".join([random.choice(alph0)] + [random.choice(alph1) for _ in range(3)])
-    used_ids.add(id_)
-    return id_
 
 class Dumper(yaml.Dumper):
     def __init__(self, *args, **kwargs):
@@ -1390,31 +1294,17 @@ def make_main_step(cmds, name, local):
             "run": str_or_literal(cmds)
         }
 
-
 def is_empty_def(def_):
     if def_ is None:
         return True
     for line in def_:
         if line.strip() != "":
-            #print(line)
             return False
     return True
 
 def defnames_ordered(defs, thens):
     res = ['main']
-    """
-    while len(res) < len(defs):
-        if res[-1] in thens:
-            res.append(thens[res[-1]])
-        else:
-            for n in defs.keys():
-                if n not in res:
-                    res.append(n)
-                    break
-    """
-
-    #print("thens", thens)
-
+    
     while len(res) < len(defs):
         if res[-1] in thens:
             res.append(thens[res[-1]])
@@ -1464,20 +1354,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
         expand_macros(defs, thens, shells, opts, github, githubdata)
 
         if github:
-            """
-            if verbose and isinstance(src, str) and isinstance(dst_workflow, str):
-                print("{} -> \n {}".format(src, "\n ".join([dst_workflow])))
-            """
             
-            #text = [l for l in render(defs, thens, opts, src_name, echo_off = False, warning = False).split('\n') if l != '']
-
-            """
-            for i, line in enumerate(text):
-                problem = '%~dp0'
-                if problem in line:
-                    raise Exception("{} does not work on github actions use %CD%, line {}".format(problem, line))
-            """
-
             steps = []
             if githubdata.checkout:
                 steps.append({"uses": "actions/checkout@v3", "name": "checkout"})
@@ -1493,23 +1370,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 text = dedent(text)
                 github_check_cd(text)
                 step = GithubShellStep(text, shells[name], name)
-                #print("shells[name]", shells[name])
                 steps.append(make_github_step(step, opts, githubdata))
-
-            """
-            if "\n".join(text).strip() != '':
-                steps.append(make_main_step(text, os.path.splitext(src_name)[0], local=False))
-            """
-
-            """
-            if len(githubdata.msys2) > 0:
-                steps.append(make_msys2_step(githubdata.msys2, opts))
-            """
-            
-            """
-            for step in githubdata.steps:
-                steps.append(make_github_step(step, opts))
-            """
 
             if githubdata.upload:
                 steps.append(make_upload_step(githubdata.upload))
@@ -1523,44 +1384,17 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
 
             text, files = render_local_main(defs, thens, shells, opts, src_name, echo_off, warning)
 
-            
             for file_name, file_content in files:
                 dst_path = os.path.join(os.path.dirname(src), file_name)
-                #print("dst_path", dst_path)
-                """
-                with open(dst_path, 'w', encoding='utf=8') as f:
-                    f.write(file_content)
-                """
                 file_content = dedent(insert_matrix_values(file_content, githubdata.matrix))
-
-
                 write(dst_path, file_content)
                 dst_paths.append(dst_path)
 
-            """
-            if verbose and isinstance(src, str) and isinstance(dst_bat, str):
-                print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
-            """
-
             text = dedent(insert_matrix_values(text, githubdata.matrix))
 
-            """
-            if githubdata.matrix:
-                for key, values in githubdata.matrix.items():
-                    #text[i] = text[i].replace(values[0], "${{ matrix." + key + " }}")
-                    pattern = '[$][{][{]\\s*' + 'matrix.' + key + '\\s*[}][}]'
-                    #print(pattern)
-                    #print(">{}<".format(key))
-                    
-                    text = re.sub(pattern, values[0], text)
-            """
-
-            #write(dst_bat, defs, thens, opts, src_name, echo_off, warning)
             write(dst_bat, text)
             dst_paths.append(dst_bat)
 
     if verbose and isinstance(src, str) and isinstance(dst_bat, str):
         print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
 
-    #print("dst_bat", dst_bat)
-    #print("dst_workflow", dst_workflow)
