@@ -68,13 +68,19 @@ class GithubShellStep:
     run: str = None
     shell: str = "cmd"
     name: str = None
-    
+
 @dataclass
-class GitHubData:
+class GithubMatrix:
+    matrix: dict = field(default_factory=dict)
+    include: list = field(default_factory=list)
+    exclude: list = field(default_factory=list)
+
+@dataclass
+class GithubData:
     checkout: bool = False
     release: list = field(default_factory=list)
     upload: GithubUpload = None
-    matrix: dict = field(default_factory=dict)
+    matrix: GithubMatrix = field(default_factory=GithubMatrix)
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
     steps: list = field(default_factory=list)
@@ -92,7 +98,8 @@ MACRO_NAMES = [
     'set_path', 
     'copy_file', 'copy_dir', 'mkdir', 'rmdir', 
     'git_clone', 'git_pull', 'patch', 
-    'github_matrix', 'github_checkout', 'github_upload', 'github_release', 
+    'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
+    'github_checkout', 'github_upload', 'github_release', 
     'github_setup_msys2', 'github_setup_node',
     'if_arg', 
     'log', 
@@ -147,7 +154,7 @@ def make_upload_step(data: GithubUpload):
         }
     }
 
-def save_workflow(path, steps, opts: Opts, githubdata: GitHubData):
+def save_workflow(path, steps, opts: Opts, githubdata: GithubData):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     on = opts.github_on
     if on == ON_TAG:
@@ -159,8 +166,17 @@ def save_workflow(path, steps, opts: Opts, githubdata: GitHubData):
 
     main = {"runs-on":opts.github_image}
 
-    if githubdata.matrix:
-        main["strategy"] = {"matrix": githubdata.matrix, "fail-fast": False}
+    matrix = githubdata.matrix.matrix
+    include = githubdata.matrix.include
+    exclude = githubdata.matrix.exclude
+
+    if len(matrix) > 0 or len(include) > 0:
+        strategy = {"matrix": matrix, "fail-fast": False}
+        if len(include) > 0:
+            strategy["matrix"]["include"] = include
+        if len(exclude) > 0:
+            strategy["matrix"]["exclude"] = exclude
+        main["strategy"] = strategy
 
     main['steps'] = steps
 
@@ -205,7 +221,7 @@ def make_setup_node_step(data: GithubSetupNode):
     }
     return obj
 
-def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GitHubData):
+def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
 
     obj = dict()
 
@@ -736,7 +752,7 @@ def validate_args(fnname, args, kwargs, ret, argmin, argmax, kwnames, needret = 
     if needret and ret is None:
         raise Exception("{} must be assigned to env variable".format(fnname))
 
-def macro_find_app(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_find_app(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     
     validate_args("find_app", args, kwargs, ret, 1, 1, {"g", "goto", "c", "cmd"}, True)
 
@@ -762,7 +778,7 @@ exit /b
     tests = tests + ['if not defined {} {}\n'.format(env_name, error)]
     return "".join(tests)
 
-def macro_find_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_find_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     items = args[0]
     label = args[1]
     label_success = "{}_find_file_found".format(name)
@@ -778,7 +794,7 @@ def quoted(s):
 def escape_url(s):
     return quoted("".join(["^" + c if c == '%' else c for c in s]))
 
-def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     url = args[0]
     dest = args[1]
 
@@ -857,7 +873,7 @@ def kwarg_value(kwargs, *names):
             return value
 
 
-def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
     src = args[0]
     force = kwargs.get('force')
@@ -895,7 +911,7 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHu
         clean_exp = ""
     return exp, clean_exp
 
-def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
     COMPRESSION_MODE = {
         "-mx0": "copy",
@@ -936,7 +952,7 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubD
 
     return " ".join(cmd) + "\n"
 
-def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p", "strip"})
     if opts.patch_in_path:
         patch = "patch"
@@ -954,15 +970,15 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHu
 
     return " ".join(cmd) + "\n"
     
-def macro_mkdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_mkdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     return "if not exist \"{}\" mkdir \"{}\"\n".format(arg, arg)
 
-def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     return "echo %DATE% %TIME% {} >> %~dp0log.txt\n".format(arg)
 
-def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     if ctx.shell == 'cmd':
         return "rmdir /s /q {}\n".format(quoted(arg))
@@ -971,10 +987,10 @@ def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     else:
         raise Exception("rmdir not implemented for shell {}".format(ctx.shell))
 
-def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     return macro_clean_dir(name, args, opts)
 
-def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     return "del /q \"{}\"\n".format(arg)
 
@@ -988,7 +1004,7 @@ def if_group(cond, cmds):
 """.format(cond, "\n".join(cmds))
 
 
-def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     url = args[0]
     if len(args) > 1:
         dir = args[1]
@@ -1028,7 +1044,7 @@ popd
 
     return cmd
 
-def macro_git_pull(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_git_pull(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     base = args[0]
     return textwrap.dedent("""\
     pushd {}
@@ -1036,14 +1052,14 @@ def macro_git_pull(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     popd
     """).format(base)
 
-def macro_set_path(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_set_path(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     """
     if ctx.github:
         return "echo PATH={}>> %GITHUB_ENV%\n".format(";".join(args))
     """
     return "set PATH=" + ";".join(args) + "\n"
 
-def macro_set_var(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_set_var(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     n, v = args
     res = []
     if ctx.shell == 'cmd':
@@ -1058,17 +1074,17 @@ def macro_set_var(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
         raise Exception("set_var not implemented for shell {}".format(ctx.shell))
     return "".join(res)
 
-def macro_copy_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_copy_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("copy_file", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "copy /y {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("copy_dir", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "xcopy /s /q /y /i {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_use_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_use_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     #print("opts", opts)
     paths1 = set()
     paths2 = set()
@@ -1115,7 +1131,7 @@ def macro_use_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         return "set PATH=" + ";".join(paths) + "\n"
     return ""
 
-def macro_install_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_install_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
     for n in args:
         if n == 'aqt':
@@ -1144,36 +1160,36 @@ def macro_install_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata
 
     return "\n".join(res) + "\n"
 
-def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
         return 'call "{}"\n'.format('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat')
     else:
         return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
 
-def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     #print(args)
     return ''
 
-def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
     for n in args:
         res.append('echo where {}'.format(n))
         res.append('where {}'.format(n))
     return "\n".join(res) + "\n"
 
-def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     value, defname = args
     return 'if "%1" equ "{}" goto {}_begin\n'.format(value, defname)
 
-def macro_github_release(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_release(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     githubdata.release = args
     return '\n'
 
-def macro_github_checkout(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_checkout(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     githubdata.checkout = True
     return '\n'
 
-def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("github_upload", args, kwargs, ret, 1, 1, {"n", "name"})
     arg = args[0]
     if isinstance(arg, list):
@@ -1186,12 +1202,20 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
     githubdata.upload = GithubUpload(name, path)
     return '\n'
 
-def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
-    githubdata.matrix[ret] = args[0]
+    githubdata.matrix.matrix[ret] = args[0]
     return '\n'
 
-def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_matrix_include(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    githubdata.matrix.include.append(kwargs)
+    return '\n'
+
+def macro_github_matrix_exclude(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    githubdata.matrix.exclude.append(kwargs)
+    return '\n'
+
+def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("setup_msys2", args, kwargs, ret, 0, 0, {"m", "msystem", "i", "install", "u", "update"})
     msystem = kwarg_value(kwargs, "m", "msystem")
     install = kwarg_value(kwargs, "i", "install")
@@ -1201,23 +1225,23 @@ def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, gith
     githubdata.setup_msys2 = GithubSetupMsys2(msystem, install, update)
     return '\n'
 
-def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("setup_node", args, kwargs, ret, 1, 1, {})
     node_version = args[0]
     githubdata.setup_node = GithubSetupNode(node_version)
     return '\n'
 
-def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
         return '\n'
     return 'pushd %~dp0\n'
 
-def macro_popd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_popd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
         return '\n'
     return 'popd\n'
 
-def macro_substr(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GitHubData):
+def macro_substr(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("substr", args, kwargs, ret, 2, 3, {}, True)
     stop = None
     if len(args) == 3:
@@ -1240,7 +1264,7 @@ def maybe_macro(line):
             return True
     return False
     
-def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GitHubData):
+def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubData):
 
     if 'clean' not in defs:
         defs['clean'] = []
@@ -1322,12 +1346,15 @@ def defnames_ordered(defs, thens):
 def filter_empty_lines(text):
     return "\n".join([l for l in text.split('\n') if l.strip() != ''])
 
-def insert_matrix_values(text, matrix):
-    if len(matrix) == 0:
-        return text
-    for key, values in matrix.items():
+def insert_matrix_values(text, matrix : GithubMatrix):
+    for key, values in matrix.matrix.items():
         pattern = '[$][{][{]\\s*' + 'matrix.' + key + '\\s*[}][}]'
         text = re.sub(pattern, values[0], text)
+    include = matrix.include
+    if len(include) > 0:
+        for key, value in include[0].items():
+            pattern = '[$][{][{]\\s*' + 'matrix.' + key + '\\s*[}][}]'
+            text = re.sub(pattern, value, text)
     return text
 
 def github_check_cd(text):
@@ -1345,7 +1372,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     dst_paths = []
 
     for github in [False, True]:
-        githubdata = GitHubData()
+        githubdata = GithubData()
         
         defs, thens, shells, opts = read(src, github)
 
