@@ -96,7 +96,8 @@ MACRO_NAMES = [
     'download', 
     'zip', 'unzip',
     'set_path', 
-    'copy_file', 'copy_dir', 'mkdir', 'rmdir', 
+    'foreach',
+    'copy_file', 'copy_dir', 'mkdir', 'rmdir', 'move_file',
     'git_clone', 'git_pull', 'patch', 
     'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
     'github_checkout', 'github_upload', 'github_release', 
@@ -738,17 +739,31 @@ def remove_redundant_gotos(res):
 
     return changed
 
-def validate_args(fnname, args, kwargs, ret, argmin, argmax, kwnames, needret = False):
-    if argmin > -1 and argmax > -1:
+def validate_args(fnname, args, kwargs, ret, argmin = None, argmax = None, kwnames = None, needret = False):
+
+    argmin_ = argmin is not None and argmin > -1
+    argmax_ = argmax is not None and argmax > -1
+
+    if argmin_ and argmax_:
         if not (argmin <= len(args) <= argmax):
             if argmin == argmax:
                 nargs = str(argmin)
             else:
                 nargs = "{} to {}".format(argmin, argmax)
             raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
-    for n in kwargs:
-        if n not in kwnames:
-            raise Exception("{} unknown option {}".format(fnname, n))
+    elif argmin_:
+        if len(args) < argmin:
+            nargs = "{} or more".format(argmin)
+            raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
+    elif argmax_:
+        if len(args) > argmax:
+            nargs = "{} or less".format(argmin)
+            raise Exception("{} expects {} args, got {}: {}".format(fnname, nargs, len(args), str(args)))
+
+    if kwnames is not None:
+        for n in kwargs:
+            if n not in kwnames:
+                raise Exception("{} unknown option {}".format(fnname, n))
     if needret and ret is None:
         raise Exception("{} must be assigned to env variable".format(fnname))
 
@@ -994,15 +1009,13 @@ def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: 
     arg = args[0]
     return "del /q \"{}\"\n".format(arg)
 
-
 def if_group(cond, cmds):
     if len(cmds) == 1:
         return "if {} {}\n".format(cond, cmds[0])
     return """if {} (
-{}
+    {}
 )
-""".format(cond, "\n".join(cmds))
-
+""".format(cond, "\n    ".join(cmds))
 
 def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     url = args[0]
@@ -1011,7 +1024,7 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     else:
         dir = None
 
-    branch = kwargs.get('branch')
+    branch = kwarg_value(kwargs, 'b', 'branch', 'ref')
     
     basename = os.path.splitext(os.path.basename(url))[0]
     if dir:
@@ -1031,14 +1044,14 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
 
     if branch:
         checkout = " ".join([git, 'checkout', branch])
-        cmds = [clone, "pushd {}".format(basename), checkout, "popd"]
+        cmds = [clone, "pushd {}".format(basename), "    " + checkout, "popd"]
     else:
         cmds = [clone]
 
     cmd = if_group(cond, cmds)
     if kwargs.get('pull'):
         cmd = cmd + """pushd {}
-{} pull
+    {} pull
 popd
 """.format(basename, git)
 
@@ -1078,6 +1091,11 @@ def macro_copy_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     validate_args("copy_file", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "copy /y {} {}\n".format(quoted(src), quoted(dst))
+
+def macro_move_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("move_file", args, kwargs, ret, 2, 2, set(), False)
+    src, dst = args
+    return "move /y {} {}\n".format(quoted(src), quoted(dst))
 
 def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("copy_dir", args, kwargs, ret, 2, 2, set(), False)
@@ -1253,7 +1271,19 @@ def macro_substr(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gith
     else:
         ixs = stop
     return 'set {}=%{}:~{}%\n'.format(ret, varname, ixs)
-    
+
+def macro_foreach(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("foreach", args, kwargs, ret, 2, -1, [])
+    vars = args[1:]
+    res = []
+    for i in range(len(vars[0])):
+        expr = args[0]
+        for j in range(len(vars)):
+            pat = "\\${}".format(j + 1)
+            expr = re.sub(pat, vars[j][i], expr)
+        res.append(expr + "\n")
+    return "".join(res)
+
 def maybe_macro(line):
     if '(' not in line:
         return False
@@ -1264,11 +1294,41 @@ def maybe_macro(line):
             return True
     return False
     
+def rewrap(lines):
+    text = "".join(lines)
+    lines = [line + "\n" for line in text.split("\n")]
+    return lines
+
+def reindent(expr, orig):
+    ws = re.match("(\\s*)", orig).group(1)
+    lines = [ws + line for line in expr.split("\n")]
+    print(expr, lines)
+    return "\n".join(lines) + "\n"
+
 def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubData):
 
     if 'clean' not in defs:
         defs['clean'] = []
         shells['clean'] = 'cmd'
+
+    need_rewrap = set()
+
+    for name in defs.keys():
+        shell = shells[name]
+        for i, line in enumerate(defs[name]):
+            if 'foreach' in line and maybe_macro(line):
+                try:
+                    ret, macroname, args, kwargs = parse_macro(line)
+                    if macroname == 'foreach':
+                        ctx = Ctx(github, shell)
+                        exp = macro_foreach(name, args, kwargs, ret, opts, ctx, githubdata)
+                        defs[name][i] = reindent(exp, line)
+                        need_rewrap.add(name)
+                except ParseMacroError as e:
+                    pass
+
+    for name in need_rewrap:
+        defs[name] = rewrap(defs[name])
 
     for name in defs.keys():
         shell = shells[name]
@@ -1283,8 +1343,7 @@ def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubDat
                         exp, clean_exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
                     else:
                         exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
-                    ws = re.match("(\\s*)", line).group(1)
-                    defs[name][i] = ws + exp
+                    defs[name][i] = reindent(exp, line)
                     continue
                 except ParseMacroError as e:
                     pass
