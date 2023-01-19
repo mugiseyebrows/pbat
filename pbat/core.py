@@ -37,6 +37,7 @@ class Opts:
     github: bool = False
     zip_in_path = False
     git_in_path = False
+    tar_in_path = False
     patch_in_path = False
     github_workflow = False
     github_image: str = WINDOWS_LATEST
@@ -102,6 +103,7 @@ MACRO_NAMES = [
     'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
     'github_checkout', 'github_upload', 'github_release', 
     'github_setup_msys2', 'github_setup_node',
+    'untar',
     'if_arg', 
     'log', 
     'where',
@@ -287,8 +289,16 @@ def read(src, github):
 
     lines = []
 
+    def pattern_join(*args):
+        return "".join(args)
+
     def process_line(line, cwd):
-        m = re.match('^include\\s+(.*[.]pbat)$', line)
+
+        PBAT_FILE = "([0-9a-z_]+[.]pbat)"
+        SPACE = "\\s*"
+        START = "^\\s*"
+
+        m = re.match(pattern_join(START, 'include', SPACE, '\\(', SPACE, PBAT_FILE, SPACE, '\\)'), line)
         if m:
             path = os.path.join(cwd, m.group(1))
             with open(path, encoding='utf-8') as f_:
@@ -388,9 +398,6 @@ def read(src, github):
         START = "^\\s*"
         END = "\\s*$"
 
-        def pattern_join(*args):
-            return "".join(args)
-
         m = re.match(pattern_join(START, 'msys2[_-]msystem', SPACE, ID, END), line, re.IGNORECASE)
         if m:
             opts.msys2_msystem = m.group(1).strip()
@@ -483,6 +490,9 @@ def read(src, github):
         defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])\n'] + defs['main']
     if 'patch' in used and not opts.patch_in_path:
         defs['main'] = ['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])\n'] + defs['main']
+    if 'untar' in used and not opts.tar_in_path:
+        defs['main'] = ['TAR = find_app([C:\\Program Files\\Git\\usr\\bin\\tar.exe])\n'] + defs['main']
+        defs['main'] = ['GZIP = find_app([C:\\Program Files\\Git\\usr\\bin\\gzip.exe])\n'] + defs['main']
 
     if 'msys2' in shells.values():
         if github:
@@ -839,8 +849,16 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     is_wget = False
     is_curl = True
 
+    def spacejoin_nonempty(*vs):
+        return " ".join([v for v in vs if v != ""])
+
+    if kwarg_value(kwargs, 'k', 'insecure'):
+        insecure = '-k'
+    else:
+        insecure = ''
+
     if is_curl:
-        cmd = " ".join([e for e in [curl,'-L', proxy, user_agent,'-o',quoted(dest), quoted(url)] if e != ""]) + "\n"
+        cmd = spacejoin_nonempty(curl, '-L', proxy, user_agent, insecure, '-o', quoted(dest), quoted(url)) + "\n"
     elif is_wget:
         wget = "C:\\msys64\\usr\\bin\\wget.exe"
         cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
@@ -851,7 +869,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         if shell == 'cmd':
             exp = "if not exist {} {}\n".format(quoted(dest), cmd)
         elif shell == 'msys2':
-            exp = "if [ -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
+            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
         else:
             raise Exception("download not implemented for shell {}".format(shell))
 
@@ -925,6 +943,47 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
         # todo optional clean
         clean_exp = ""
     return exp, clean_exp
+
+
+def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    #print(args)
+    shell = ctx.shell
+    src = args[0]
+    if len(args) > 1:
+        test = args[1]
+    else:
+        test = None
+
+    if shell == 'cmd':
+        if opts.tar_in_path:
+            cmds = ['tar -xf {}'.format(quoted(src))]
+            if test:
+                return if_group("not exist {}".format(quoted(test)), cmds)
+            return "\n".join(cmds) + "\n"
+        else:
+            ext = os.path.splitext(src)[1]
+            if ext == '.gz':
+                cmds = [
+                    '"%GZIP%" -k -d {}'.format(src), 
+                    '"%TAR%" -xf {}'.format(os.path.splitext(src)[0])
+                ]
+                if test:
+                    return if_group("exist {}".format(quoted(test)), cmds)
+                else:
+                    return "\n".join(cmds) + "\n"
+            else:
+                raise Exception("untar not implemented for ext {}".format(ext))
+    elif shell == 'msys2':
+        cmd = 'tar -xf {}'.format(quoted(src))
+        if test:
+            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(src), cmd)
+        else:
+            exp = cmd
+        return exp
+    else:
+        raise Exception("untar not implemented for shell {}".format(shell))
+
+    return exp
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
@@ -1184,9 +1243,6 @@ def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata:
     else:
         return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
 
-def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    #print(args)
-    return ''
 
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
@@ -1302,7 +1358,7 @@ def rewrap(lines):
 def reindent(expr, orig):
     ws = re.match("(\\s*)", orig).group(1)
     lines = [ws + line for line in expr.split("\n")]
-    print(expr, lines)
+    #print(expr, lines)
     return "\n".join(lines) + "\n"
 
 def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubData):
