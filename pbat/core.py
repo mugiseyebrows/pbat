@@ -812,7 +812,7 @@ def macro_find_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     return "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_success + "\n" + "".join(puts)
 
 def quoted(s):
-    if ' ' in s or '%' in s:
+    if ' ' in s or '%' in s or '+' in s:
         return '"' + s + '"'
     return s
 
