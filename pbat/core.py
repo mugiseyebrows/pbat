@@ -273,6 +273,10 @@ def count_parenthesis(line):
             cl += 1
     return op, cl
 
+def pat_spacejoin(*pat):
+    SPACE = "\\s*"
+    return SPACE.join(pat)
+
 def read(src, github):
 
     def_line = dict()
@@ -294,11 +298,12 @@ def read(src, github):
 
     def process_line(line, cwd):
 
-        PBAT_FILE = "([0-9a-z_]+[.]pbat)"
-        SPACE = "\\s*"
-        START = "^\\s*"
+        PBAT_FILE = "([0-9a-z_-]+[.]pbat)"
+        START = "^"
 
-        m = re.match(pattern_join(START, 'include', SPACE, '\\(', SPACE, PBAT_FILE, SPACE, '\\)'), line)
+        pat = pat_spacejoin(START, 'include', '\\(', PBAT_FILE, '\\)')
+
+        m = re.match(pat, line, re.IGNORECASE)
         if m:
             path = os.path.join(cwd, m.group(1))
             with open(path, encoding='utf-8') as f_:
@@ -351,19 +356,26 @@ def read(src, github):
         if i in skip:
             continue
 
+        ID_NOCAP = "[0-9a-z_]+"
         ID = "([0-9a-z_]+)"
         SPACE = "\\s*"
-        START = "^\\s*"
+        START = "^"
 
-        m1 = re.match(SPACE.join([START,ID,"=",ID]), line)
-        m2 = re.match(START + ID, line)
-        if (m1 and m1.group(2) in MACRO_NAMES) or (m2 and m2.group(1) in MACRO_NAMES):
+        pat_w_ret = pat_spacejoin(START,ID_NOCAP,"=",ID)
+        pat_wo_ret = pat_spacejoin(START,ID)
+
+        m1 = re.match(pat_w_ret, line, re.IGNORECASE)
+        m2 = re.match(pat_wo_ret, line, re.IGNORECASE)
+
+        name = None
+        if m1:
+            name = m1.group(1)
+        elif m2:
+            name = m2.group(1)
+
+        if name in MACRO_NAMES:
             line = unsplit_line(lines, i, skip)
             lines_.append(line)
-            if m1:
-                name = m1.group(2)
-            if m2:
-                name = m2.group(1)
             used.add(name)
             if name == 'download':
                 m = re.search(':({})\\s*='.format("|".join(CHECKSUM_ALGS)), line)
@@ -393,22 +405,24 @@ def read(src, github):
                 setattr(opts, name, m.group(2) in ['on','true','1'])
                 continue
         
-        ID = "([0-9a-z_]+)"
-        SPACE = "\\s*"
-        START = "^\\s*"
+        ID = "([0-9a-z_-]+)"
+        START = "^"
         END = "\\s*$"
 
-        m = re.match(pattern_join(START, 'msys2[_-]msystem', SPACE, ID, END), line, re.IGNORECASE)
+        pat = pat_spacejoin(START, 'msys2[_-]msystem', ID)
+        m = re.match(pat, line, re.IGNORECASE)
         if m:
             opts.msys2_msystem = m.group(1).strip()
             continue
 
-        m = re.match('^\\s*github[-_]image\\s+(.*)$', line)
+        pat = pat_spacejoin(START, 'github[_-]image', ID)
+        m = re.match(pat, line)
         if m:
             opts.github_image = m.group(1).strip()
             continue
-
-        m = re.match('^\\s*github[-_]on\\s+(.*)$', line)
+        
+        pat = pat_spacejoin(START, 'github[_-]on', ID)
+        m = re.match(pat, line)
         if m:
             trigger = m.group(1).strip()
             opts.github_on = {
@@ -429,11 +443,11 @@ def read(src, github):
         
         ID = "([0-9a-z_]+)"
         IDS = "([0-9a-z_ ]*)"
-        SPACE = "\\s*"
-        START = "^\\s*"
-        END = "\\s*$"
+        START = "^"
 
-        m = re.match(pattern_join(START, 'def', SPACE, ID, SPACE, IDS, END), line)
+        pat = pat_spacejoin(START, 'def\\s+', ID)
+
+        m = re.match(pat, line, re.IGNORECASE)
         if m is not None:
 
             name, then, deps_, shell = parse_def(line)
