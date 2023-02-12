@@ -3,10 +3,37 @@ from lark import Lark, Tree, Token
 from lark.exceptions import LarkError
 import unittest
 
-base = os.path.dirname(__file__)
-path = os.path.join(base, "macro.lark")
-with open(path, encoding='utf-8') as f:
-    GRAMMAR = f.read()
+if os.environ.get("DEV_PBAT") == "1":
+    base = os.path.dirname(__file__)
+    path = os.path.join(base, "macro.lark")
+    with open(path, encoding='utf-8') as f:
+        GRAMMAR = f.read()
+else:
+    GRAMMAR = """
+start: (ret_name "=")? fn_name ( "(" arg ("," arg)* ")" | "(" ")" )
+
+name: NAME
+
+ret_name: NAME
+
+fn_name: NAME
+
+?arg: parg | kwarg
+
+parg: ARG | list
+
+kwarg: ":" name ("=" parg)?
+
+list: "[" parg ("," parg)* "]" | "[" "]"
+
+NAME: /[a-z0-9_-]+/i
+
+ARG: /([^",()\[\]:\s][^",()\[\]]*)|("[^"]*")/
+
+%import common.WS
+
+%ignore WS    
+"""
 
 parser = Lark(GRAMMAR)
 

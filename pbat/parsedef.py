@@ -2,10 +2,31 @@ import os
 from lark import Lark, Tree, Token
 import unittest
 
-base = os.path.dirname(__file__)
-path = os.path.join(base, "def.lark")
-with open(path, encoding='utf-8') as f:
-    GRAMMAR = f.read()
+if os.environ.get("DEV_PBAT") == "1":
+    base = os.path.dirname(__file__)
+    path = os.path.join(base, "def.lark")
+    with open(path, encoding='utf-8') as f:
+        GRAMMAR = f.read()
+else:
+    GRAMMAR = """
+start: "def" defname attr*
+
+?attr: then | depends | shell
+
+then.1: "then" NAME
+
+depends: "depends" "on" NAME+
+
+shell: "shell" NAME
+
+defname: NAME
+
+NAME: /[a-z0-9_-]+/i
+
+%import common.WS
+
+%ignore WS
+"""
 
 parser = Lark(GRAMMAR)
 
