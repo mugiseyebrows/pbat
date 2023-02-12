@@ -926,6 +926,10 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     force = kwargs.get('force')
     keep = kwargs.get('keep')
     output = kwarg_value(kwargs, 'output', 'o')
+    files = kwarg_value(kwargs, 'files', 'f')
+
+    if isinstance(files, str):
+        files = [files]
 
     if len(args) > 1:
         test = args[1]
@@ -941,6 +945,11 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     if output:
         cmd.append("-o{}".format(quoted(output)))
     cmd.append(quoted(src))
+
+    if files is not None:
+        for f in files:
+            cmd.append(quoted(f))
+
     exp = " ".join(cmd) + "\n"
 
     if force or opts.unzip_test == False:
