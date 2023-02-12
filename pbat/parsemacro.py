@@ -30,7 +30,7 @@ NAME: /[a-z0-9_-]+/i
 
 ARG: /([^",()\[\]:\s][^",()\[\]]*)|("[^"]*")/
 
-%import common.WS
+WS: /[ \\t\\f\\r\\n]/+
 
 %ignore WS    
 """

@@ -23,7 +23,7 @@ defname: NAME
 
 NAME: /[a-z0-9_-]+/i
 
-%import common.WS
+WS: /[ \\t\\f\\r\\n]/+
 
 %ignore WS
 """
