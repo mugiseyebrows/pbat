@@ -133,7 +133,7 @@ yaml.add_representer(folded_str, folded_str_representer)
 yaml.add_representer(literal_str, literal_str_representer)
 
 def str_or_literal(items):
-    if len(items) == 1:
+    if len(items) == 1 and '%' not in items[0]:
         return items[0]
     return literal_str("\n".join(items) + "\n")
 
@@ -393,16 +393,18 @@ def read(src, github):
     name = None
     for i, line in enumerate(lines):
         #line = line.strip()
-        m = re.match('^\\s*(debug|clean|download_test|unzip_test|zip_test|github|github_workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
+        m = re.match('^\\s*(debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
         if m is not None:
-            setattr(opts, m.group(1), m.group(2) in ['on','true','1'])
+            optname = m.group(1).replace("-","_")
+            optval = m.group(2) in ['on','true','1']
+            setattr(opts, optname, optval)
             continue
 
-        m = re.match('^\\s*([a-z0-9_]+_in_path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
+        m = re.match('^\\s*([a-z0-9_]+[_-]in[_-]path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
         if m:
-            name = m.group(1)
-            if hasattr(opts, name):
-                setattr(opts, name, m.group(2) in ['on','true','1'])
+            optname = m.group(1).replace("-","_")
+            if hasattr(opts, optname):
+                setattr(opts, optname, m.group(2) in ['on','true','1'])
                 continue
         
         ID = "([0-9a-z_-]+)"
@@ -496,9 +498,9 @@ def read(src, github):
             if n2 != "end":
                 print("missing def {}".format(n2))
     
-    if 'download' in used and not opts.curl_in_path:
+    if 'download' in used and not opts.curl_in_path and not github:
         defs['main'] = ['CURL = find_app([C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe])\n'] + defs['main']
-    if ('zip' in used or 'unzip' in used) and not opts.zip_in_path:
+    if ('zip' in used or 'unzip' in used) and not opts.zip_in_path and not github:
         defs['main'] = ['P7Z = find_app([C:\\Program Files\\7-Zip\\7z.exe])\n'] + defs['main']
     if 'git_clone' in used and not opts.git_in_path:
         defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])\n'] + defs['main']
@@ -841,7 +843,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     force = kwargs.get('force')
     keep = kwargs.get('keep')
-    if opts.curl_in_path or shell =='msys2':
+    if opts.curl_in_path or shell =='msys2' or ctx.github:
         curl = "curl"
     else:
         curl = '"%CURL%"'
@@ -936,7 +938,7 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     else:
         test = None
 
-    if opts.zip_in_path:
+    if opts.zip_in_path or ctx.github:
         cmd = ['7z']
     else:
         cmd = ['"%P7Z%"']
@@ -1023,7 +1025,7 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     validate_args("zip", args, kwargs, ret, 2, 2, kwnames, False)
 
     src, dst = args
-    if opts.zip_in_path:
+    if opts.zip_in_path or ctx.github:
         zip = '7z'
     else:
         zip = '"%P7Z%"'
@@ -1538,6 +1540,8 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 text = filter_empty_lines(render_one(name, defs, thens, opts, src_name, echo_off = False, warning = False))
                 text = dedent(text)
                 github_check_cd(text)
+                if text == '':
+                    continue
                 step = GithubShellStep(text, shells[name], name)
                 steps.append(make_github_step(step, opts, githubdata))
 
