@@ -43,6 +43,7 @@ class Opts:
     github_image: str = WINDOWS_LATEST
     github_on: int = ON_PUSH
     msys2_msystem: str = None
+    env_path: list[str] = field(default_factory=list)
 
 @dataclass
 class GithubUpload:
@@ -69,6 +70,7 @@ class GithubShellStep:
     run: str = None
     shell: str = "cmd"
     name: str = None
+    condition: str = None
 
 @dataclass
 class GithubMatrix:
@@ -110,7 +112,8 @@ MACRO_NAMES = [
     'clean_dir', 'clean_file', 
     'set_var',
     'substr', 
-    'use_tool', 'install_tool', 'call_vcvars'
+    'use_tool', 'install_tool', 'call_vcvars',
+    'use', 'install', 'add_path'
 ]
 
 def get_dst_bat(src):
@@ -258,6 +261,9 @@ def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
     
     obj["run"] = str_or_literal(step.run.split("\n"))
 
+    if step.condition:
+        obj["if"] = step.condition
+
     return obj
 
 def count_parenthesis(line):
@@ -288,6 +294,8 @@ def read(src, github):
     thens = dict()
 
     shells = dict()
+
+    conditions = dict()
 
     opts = Opts()
 
@@ -452,7 +460,7 @@ def read(src, github):
         m = re.match(pat, line, re.IGNORECASE)
         if m is not None:
 
-            name, then, deps_, shell = parse_def(line)
+            name, then, deps_, shell, condition = parse_def(line)
             #print("name {} then {} deps_ {} shell {}".format(name, then, deps_, shell))
 
             deps_ = []
@@ -468,6 +476,9 @@ def read(src, github):
                 print("redefinition {} on line {}, first defined on line {}".format(name, i+1, def_line[name]))
             def_line[name] = i
             defs[name] = []
+
+            if condition is not None:
+                conditions[name] = condition
 
             #print("line {} def {} depends on {} then {} shell {}".format(i, name, deps_, then, shell))
             
@@ -553,7 +564,7 @@ def read(src, github):
         var = (alg + 'sum').upper()
         defs['main'] = ['{} = find_app([C:\\Program Files\\Git\\usr\\bin\\{}])\n'.format(var, exe)] + defs['main']
     
-    return defs, thens, shells, opts
+    return defs, thens, shells, opts, conditions
 
 def insert_deps(names, deps):
     res = []
@@ -578,14 +589,28 @@ def find_app(name, items, label):
 def without(vs, v):
     return [e for e in vs if e != v]
 
+def uniq(vs):
+    res = []
+    for v in vs:
+        if v not in res:
+            res.append(v)
+    return res
 
 def render_one(name, defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
+
+    #print("render one", name, opts.env_path)
+
     res = []
     if not opts.debug and echo_off:
         res = res + ['@echo off\n']
 
     if warning:
         res += ['rem {}\n'.format(WARNING.format(src_name))]
+
+    if len(opts.env_path) > 0:
+        res += ['set PATH={};%PATH%'.format(";".join(uniq(opts.env_path))) + '\n']
+        #res += ['foo']
+        pass
 
     if 'main' not in defs:
         print("main not defined")
@@ -1365,6 +1390,70 @@ def macro_foreach(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
         res.append(expr + "\n")
     return "".join(res)
 
+def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+
+    ver = None
+    arch = None
+    if len(args) == 3:
+        app, ver, arch = args
+    elif len(args) == 2:
+        app, ver = args
+    elif len(args) == 1:
+        app, = args
+    else:
+        raise ValueError("install requires at least one arg")
+    
+    if app == 'qt':
+        if ver == '5.15.2' or ver is None:
+            if arch == '5.15.2' or arch is None:
+                opts.env_path.append('C:\\qt\\5.15.2\\mingw81_64\\bin')
+                return 'if not exist "C:\\qt\\5.15.2\\mingw81_64\\bin\\qmake.exe" aqt install-qt windows desktop 5.15.2 win64_mingw81 -O C:\\Qt'
+        else:
+            raise ValueError("install(qt, {}) not implemented".format(ver))
+
+
+    if app in ['mingw', 'mingw64']:
+        if ver == '8.1.0':
+            opts.env_path.append('C:\\qt\\Tools\\mingw810_64\\bin')
+            return 'if not exist "C:\\qt\\Tools\\mingw810_64\\bin\\gcc.exe" aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O C:\\Qt'
+        else:
+            raise ValueError("install(mingw, {}) not implemented".format(ver))
+
+    if app in ['aqt', 'aqtinstall']:
+        return 'where aqt || pip install aqtinstall'
+
+    if app == 'mugideploy':
+        return 'where mugideploy || pip install mugideploy'
+
+    return ''
+
+def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+
+    ver = None
+    arch = None
+    if len(args) == 3:
+        app, ver, arch = args
+    elif len(args) == 2:
+        app, ver = args
+    elif len(args) == 1:
+        app, = args
+    else:
+        raise ValueError("use requires at least one arg")
+
+    if app in ['conda', 'miniconda']:
+        opts.env_path.append('C:\Miniconda3')
+        opts.env_path.append('C:\Miniconda3\\Scripts')
+        opts.env_path.append('%USERPROFILE%\\Miniconda3')
+        opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
+
+    return ''
+
+def macro_add_path(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    #print("add_path args", args)
+    for arg in args:
+        opts.env_path.append(arg)
+    return ''
+
 def maybe_macro(line):
     if '(' not in line:
         return False
@@ -1514,7 +1603,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     for github in [False, True]:
         githubdata = GithubData()
         
-        defs, thens, shells, opts = read(src, github)
+        defs, thens, shells, opts, conditions = read(src, github)
 
         if github and not opts.github_workflow:
             continue
@@ -1542,7 +1631,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 github_check_cd(text)
                 if text == '':
                     continue
-                step = GithubShellStep(text, shells[name], name)
+                step = GithubShellStep(text, shells[name], name, conditions.get(name))
                 steps.append(make_github_step(step, opts, githubdata))
 
             if githubdata.upload:

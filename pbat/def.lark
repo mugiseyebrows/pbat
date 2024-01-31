@@ -1,12 +1,18 @@
 start: "def" defname attr*
 
-?attr: then | depends | shell
+?attr: then | depends | shell | if
 
 then.1: "then" NAME
 
 depends: "depends" "on" NAME+
 
 shell: "shell" NAME
+
+if: "if" cond
+
+cond: ARG+ "==" ARG+
+
+ARG: NAME | "'" | "."
 
 defname: NAME
 

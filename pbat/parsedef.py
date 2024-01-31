@@ -2,31 +2,10 @@ import os
 from lark import Lark, Tree, Token
 import unittest
 
-if os.environ.get("DEV_PBAT") == "1":
-    base = os.path.dirname(__file__)
-    path = os.path.join(base, "def.lark")
-    with open(path, encoding='utf-8') as f:
-        GRAMMAR = f.read()
-else:
-    GRAMMAR = """
-start: "def" defname attr*
-
-?attr: then | depends | shell
-
-then.1: "then" NAME
-
-depends: "depends" "on" NAME+
-
-shell: "shell" NAME
-
-defname: NAME
-
-NAME: /[a-z0-9_-]+/i
-
-WS: /[ \\t\\f\\r\\n]/+
-
-%ignore WS
-"""
+base = os.path.dirname(__file__)
+path = os.path.join(base, "def.lark")
+with open(path, encoding='utf-8') as f:
+    GRAMMAR = f.read()
 
 parser = Lark(GRAMMAR)
 
@@ -49,8 +28,13 @@ def parse_def(def_):
         depends += values
     for item in find_data(tree, 'shell'):
         shell = item.children[0].value
-
-    return name, then, depends, shell
+    condition = None
+    for item in find_data(tree, "if"):
+        for cond in find_data(item, "cond"):
+            pos1 = cond.children[0].start_pos
+            pos2 = cond.children[-1].end_pos
+            condition = def_[pos1:pos2]
+    return name, then, depends, shell, condition
 
 class TestParse(unittest.TestCase):
     def test1(self):
