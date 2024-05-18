@@ -43,6 +43,8 @@ class Opts:
     github_image: str = WINDOWS_LATEST
     github_on: int = ON_PUSH
     msys2_msystem: str = None
+    use_sed: bool = False
+    use_diff: bool = True
     env_path: list[str] = field(default_factory=list)
 
 @dataclass
@@ -100,7 +102,7 @@ MACRO_NAMES = [
     'zip', 'unzip',
     'set_path', 
     'foreach',
-    'copy_file', 'copy_dir', 'mkdir', 'rmdir', 'move_file',
+    'copy_file', 'copy_tree', 'mkdir', 'rmdir', 'rm', 'move_file',
     'git_clone', 'git_pull', 'patch', 
     'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
     'github_checkout', 'github_upload', 'github_release', 
@@ -153,7 +155,7 @@ def make_release_step(artifacts):
 def make_upload_step(data: GithubUpload):
     return {
         "name": "upload",
-        "uses": "actions/upload-artifact@v3",
+        "uses": "actions/upload-artifact@v4",
         "with": {
             "name": data.name,
             "path": str_or_literal(data.path)
@@ -398,6 +400,16 @@ def read(src, github):
     lines = lines_
     #print(lines)
 
+    for i, line in enumerate(lines):
+        if re.match("\\s*".join(["", "use", "\\(", "7z", "\\)"]), line):
+            opts.zip_in_path = True
+        if re.match("\\s*".join(["", "use", "\\(", "git", "\\)"]), line):
+            opts.git_in_path = True
+        if re.match("\\s*".join(["", "use", "\\(", "sed", "\\)"]), line):
+            opts.use_sed = True
+        if re.match("\\s*".join(["", "use", "\\(", "diff", "\\)"]), line):
+            opts.use_diff = True
+
     name = None
     for i, line in enumerate(lines):
         #line = line.strip()
@@ -498,6 +510,14 @@ def read(src, github):
         if re.match("^\\s*#", line):
             continue
 
+        m = re.match('(\\s*)sed (.*)', line)
+        if m and opts.use_sed:
+            line = m.group(1) + '"%SED%" ' + m.group(2)
+        
+        m = re.match('(\\s*)diff (.*)', line)
+        if m and opts.use_diff:
+            line = m.group(1) + '"%DIFF%" ' + m.group(2)
+
         if name is not None:
             defs[name].append(line + "\n")
 
@@ -596,7 +616,7 @@ def uniq(vs):
             res.append(v)
     return res
 
-def render_one(name, defs, thens, opts: Opts, src_name, echo_off=True, warning=True):
+def render_one(name, defs, thens, shells, opts: Opts, src_name, echo_off=True, warning=True):
 
     #print("render one", name, opts.env_path)
 
@@ -607,10 +627,8 @@ def render_one(name, defs, thens, opts: Opts, src_name, echo_off=True, warning=T
     if warning:
         res += ['rem {}\n'.format(WARNING.format(src_name))]
 
-    if len(opts.env_path) > 0:
+    if len(opts.env_path) > 0 and shells[name] == 'cmd':
         res += ['set PATH={};%PATH%'.format(";".join(uniq(opts.env_path))) + '\n']
-        #res += ['foo']
-        pass
 
     if 'main' not in defs:
         print("main not defined")
@@ -655,6 +673,9 @@ def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, 
 
     if warning:
         res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
+
+    if len(opts.env_path) > 0 and shells['main'] == 'cmd':
+        res += ['set PATH={};%PATH%'.format(";".join(uniq(opts.env_path))) + '\n']
 
     if 'main' not in defs:
         print("main not defined")
@@ -1045,7 +1066,7 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         "-mx7": "maximum",
         "-mx9": "ultra"
     }
-    kwnames = list(COMPRESSION_MODE.values()) + ["lzma"]
+    kwnames = list(COMPRESSION_MODE.values()) + ["lzma", "test", "clean"]
 
     validate_args("zip", args, kwargs, ret, 2, 2, kwnames, False)
 
@@ -1069,7 +1090,8 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
             break
 
     test = []
-    if opts.zip_test:
+    #if opts.zip_test:
+    if kwarg_value(kwargs, "test"):
         test = ['if not exist', quoted(dst)]
 
     cmd = test + [zip, 'a'] + flags + [quoted(dst), quoted(src)]
@@ -1105,14 +1127,17 @@ def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
 def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     if ctx.shell == 'cmd':
-        return "rmdir /s /q {}\n".format(quoted(arg))
+        return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
     elif ctx.shell == 'msys2':
         return "rm -rf {}\n".format(quoted(arg))
     else:
         raise Exception("rmdir not implemented for shell {}".format(ctx.shell))
 
-def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    return macro_clean_dir(name, args, opts)
+def macro_rmdir(*args):
+    return macro_clean_dir(*args)
+
+def macro_rm(*args):
+    return macro_clean_dir(*args)
 
 def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
@@ -1134,6 +1159,7 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
         dir = None
 
     branch = kwarg_value(kwargs, 'b', 'branch', 'ref')
+    submodules = kwarg_value(kwargs, 'submodules', 'recurse-submodules')
     
     basename = os.path.splitext(os.path.basename(url))[0]
     if dir:
@@ -1144,7 +1170,11 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     else:
         git = '"%GIT%"'
 
-    clone = [git, 'clone', url]
+    clone = [git, 'clone']
+    if submodules is not None:
+        clone.append('--recurse-submodules')
+    clone.append(url)
+
     if dir:
         clone.append(dir)
     clone = " ".join(clone)
@@ -1206,10 +1236,10 @@ def macro_move_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     src, dst = args
     return "move /y {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("copy_dir", args, kwargs, ret, 2, 2, set(), False)
+def macro_copy_tree(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("copy_tree", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
-    return "xcopy /s /q /y /i {} {}\n".format(quoted(src), quoted(dst))
+    return "xcopy /s /e /y /i {} {}\n".format(quoted(src), quoted(dst))
 
 def macro_use_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     #print("opts", opts)
@@ -1262,7 +1292,7 @@ def macro_install_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata
     res = []
     for n in args:
         if n == 'aqt':
-            res.append('where aqt || pip install aqtinstall')
+            res.append('where aqt > NUL || pip install aqtinstall')
         elif n in ['mingw8', 'mingw81']:
             res.append('if not exist C:\\Qt\\Tools\\mingw810_64\\bin\\gcc.exe aqt install-tool --outputdir C:\\Qt windows desktop tools_mingw qt.tools.win64_mingw810')
         elif n == 'cmake':
@@ -1405,27 +1435,34 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
     
     if app == 'qt':
         if ver == '5.15.2' or ver is None:
-            if arch == '5.15.2' or arch is None:
-                opts.env_path.append('C:\\qt\\5.15.2\\mingw81_64\\bin')
-                return 'if not exist "C:\\qt\\5.15.2\\mingw81_64\\bin\\qmake.exe" aqt install-qt windows desktop 5.15.2 win64_mingw81 -O C:\\Qt'
+            if arch == 'win64_mingw81' or arch is None:
+                opts.env_path.append('C:\\Qt\\5.15.2\\mingw81_64\\bin')
+                return 'if not exist "C:\\Qt\\5.15.2\\mingw81_64\\bin\\qmake.exe" aqt install-qt windows desktop 5.15.2 win64_mingw81 -O C:\\Qt'
+            else:
+                raise ValueError("install(qt, {}, {}) not implemented".format(ver, arch))
         else:
             raise ValueError("install(qt, {}) not implemented".format(ver))
 
-
     if app in ['mingw', 'mingw64']:
         if ver == '8.1.0':
-            opts.env_path.append('C:\\qt\\Tools\\mingw810_64\\bin')
-            return 'if not exist "C:\\qt\\Tools\\mingw810_64\\bin\\gcc.exe" aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O C:\\Qt'
+            opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
+            return 'if not exist "C:\\Qt\\Tools\\mingw810_64\\bin\\gcc.exe" aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O C:\\Qt'
         else:
             raise ValueError("install(mingw, {}) not implemented".format(ver))
 
     if app in ['aqt', 'aqtinstall']:
-        return 'where aqt || pip install aqtinstall'
+        return 'where aqt > NUL || pip install aqtinstall'
 
     if app == 'mugideploy':
-        return 'where mugideploy || pip install mugideploy'
+        return 'where mugideploy > NUL || pip install mugideploy'
 
-    return ''
+    if app == 'mugicli':
+        return 'where pyfind > NUL || pip install mugicli'
+
+    if app == 'mugisync':
+        return 'where mugisync > NUL || pip install mugisync'
+
+    raise ValueError("install({}) not implemented".format(app))
 
 def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
@@ -1445,6 +1482,32 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\Miniconda3\\Scripts')
         opts.env_path.append('%USERPROFILE%\\Miniconda3')
         opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
+    elif app == 'psql':
+        if ver is None:
+            ver = '14'
+        opts.env_path.append('C:\\Program Files\\PostgreSQL\\{}\\bin'.format(ver))
+        opts.env_path.append('C:\\Program Files\\PostgreSQL\\{}\\bin'.format(ver))
+    elif app == 'qwt':
+        if ver is None:
+            ver = '6.2.0'
+        opts.env_path.append('C:\\Qwt-{}\\lib'.format(ver))
+    elif app == 'mysql':
+        if ver is None:
+            ver = '8.2.0'
+        opts.env_path.append('C:\\mysql-{}-winx64\\bin'.format(ver))
+        opts.env_path.append('C:\\mysql-{}-winx64\\lib'.format(ver))
+    elif app == '7z':
+        opts.env_path.append('C:\\Program Files\\7-Zip')
+    if app == 'git':
+        opts.env_path.append('C:\\Program Files\\Git\\cmd')
+
+    if app == 'sed':
+        return 'set SED=C:\\Program Files\\Git\\usr\\bin\\sed.exe\n'
+    if app == 'diff':
+        return 'set DIFF=C:\\Program Files\\Git\\usr\\bin\\diff.exe'
+
+    if app == 'perl':
+        opts.env_path.append('C:\\Strawberry\\perl\\bin')
 
     return ''
 
@@ -1617,7 +1680,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             
             steps = []
             if githubdata.checkout:
-                steps.append({"uses": "actions/checkout@v3", "name": "checkout"})
+                steps.append({"uses": "actions/checkout@v4", "name": "checkout"})
 
             if githubdata.setup_msys2:
                 steps.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
@@ -1626,7 +1689,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 steps.append(make_setup_node_step(githubdata.setup_node))
 
             for name in defnames_ordered(defs, thens):
-                text = filter_empty_lines(render_one(name, defs, thens, opts, src_name, echo_off = False, warning = False))
+                text = filter_empty_lines(render_one(name, defs, thens, shells, opts, src_name, echo_off = False, warning = False))
                 text = dedent(text)
                 github_check_cd(text)
                 if text == '':
