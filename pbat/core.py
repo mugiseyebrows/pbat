@@ -882,13 +882,18 @@ def escape_url(s):
     return quoted("".join(["^" + c if c == '%' else c for c in s]))
 
 def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+
     url = args[0]
-    dest = args[1]
+
+    if len(args) > 1:
+        dest = args[1]
+    else:
+        dest = os.path.basename(url).split('?')[0]
 
     shell = ctx.shell
 
-    force = kwargs.get('force')
-    keep = kwargs.get('keep')
+    cache = kwarg_value(kwargs, 'cache', 'c')
+
     if opts.curl_in_path or shell =='msys2' or ctx.github:
         curl = "curl"
     else:
@@ -914,7 +919,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     def spacejoin_nonempty(*vs):
         return " ".join([v for v in vs if v != ""])
 
-    if kwarg_value(kwargs, 'k', 'insecure'):
+    if kwarg_value(kwargs, 'k'):
         insecure = '-k'
     else:
         insecure = ''
@@ -925,39 +930,20 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         wget = "C:\\msys64\\usr\\bin\\wget.exe"
         cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
 
-    if force or opts.download_test == False or ctx.github:
-        exp = cmd
-    else:
-        if shell == 'cmd':
-            exp = "if not exist {} {}\n".format(quoted(dest), cmd)
-        elif shell == 'msys2':
-            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
+    if shell == 'cmd':
+        if cache is None:
+            exp = cmd
         else:
-            raise Exception("download not implemented for shell {}".format(shell))
-
-    if keep:
-        clean_exp = ""
+            exp = "if not exist {} {}\n".format(quoted(dest), cmd)
+    elif shell == 'msys2':
+        if cache is None:
+            exp = cmd
+        else:
+            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
     else:
-        #clean_exp = macro_clean_file(None, [dest], {}, None, opts)
-        # todo optiona clean
-        clean_exp = ''
+        raise Exception('not implemented for shell {}'.format(shell))
 
-    sum_file = None
-    sum_alg = None
-
-    for n in CHECKSUM_ALGS:
-        if n in kwargs:
-            sum_file = kwargs[n]
-            sum_alg = n
-
-    if sum_file:
-        sum_var = (sum_alg + 'sum').upper()
-        exp = exp + """"%{}%" -c {} || (
-echo {} {}sum mismatch
-def /f {}
-exit /b
-)
-""".format(sum_var, quoted(sum_file), quoted(dest), sum_alg, quoted(dest))
+    clean_exp = None
 
     return exp, clean_exp
 
@@ -1241,81 +1227,6 @@ def macro_copy_tree(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     src, dst = args
     return "xcopy /s /e /y /i {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_use_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    #print("opts", opts)
-    paths1 = set()
-    paths2 = set()
-    for n in args:
-        if n == 'xz':
-            paths1.add('C:\\Program Files\\Git\\usr\\bin')
-        elif n == 'tar':
-            paths1.add('C:\\Program Files\\Git\\mingw64\\bin')
-        elif n == 'ninja':
-            if ctx.github:
-                #paths.add('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
-                #paths2.add('C:\\ProgramData\\Chocolatey\\bin')
-                # C:\\ProgramData\\Chocolatey\\bin has gcc in it
-                pass
-            else:
-                paths1.add('C:\\Ninja')
-        elif n in ['mingw8', 'mingw81']:
-            paths1.add('C:\\qt\\Tools\\mingw810_64\\bin')
-        elif n == 'qt5-mingw8':
-            paths1.add('C:\\Qt\\5.15.2\\mingw81_64\\bin')
-        elif n == 'git':
-            paths1.add('C:\\Program Files\\Git\\mingw64\\bin')
-        elif n == 'cmake':
-            if ctx.github:
-                paths1.add('C:\\Program Files\\CMake\\bin')
-            else:
-                paths1.add('C:\\cmake-3.23.2-windows-x86_64\\bin')
-        elif n == 'patch':
-            paths1.add('C:\\Program Files\\Git\\usr\\bin')
-        elif n in ['python', 'aqt']:
-            if ctx.github:
-                paths1.add("C:\\Miniconda")
-                paths1.add("C:\\Miniconda\\Scripts")
-            else:
-                paths1.add('C:\\Miniconda3')
-                paths1.add('C:\\Miniconda3\\Scripts')
-        elif n == '7z':
-            paths1.add('C:\\Program Files\\7-Zip')
-        else:
-            print("use_tool({}) not implemented".format(n))
-
-    if len(paths1) + len(paths2) > 0:
-        paths = list(paths1) + list(paths2) + ['%PATH%']
-        return "set PATH=" + ";".join(paths) + "\n"
-    return ""
-
-def macro_install_tool(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    res = []
-    for n in args:
-        if n == 'aqt':
-            res.append('where aqt > NUL || pip install aqtinstall')
-        elif n in ['mingw8', 'mingw81']:
-            res.append('if not exist C:\\Qt\\Tools\\mingw810_64\\bin\\gcc.exe aqt install-tool --outputdir C:\\Qt windows desktop tools_mingw qt.tools.win64_mingw810')
-        elif n == 'cmake':
-            if ctx.github:
-                # windows-2022 C:\Program Files\CMake\bin\cmake.exe
-                pass
-            else:
-                download_expr, _ = macro_download('', ['https://github.com/Kitware/CMake/releases/download/v3.24.2/cmake-3.24.2-windows-x86_64.zip', 'cmake-3.24.2-windows-x86_64.zip'], opts)
-                #unzip_expr, _ = macro_unzip('', ['cmake-3.24.2-windows-x86_64.zip', 'cmake-3.24.2-windows-x86_64'], opts)
-                res.append('if not exist C:\\cmake-3.24.2-windows-x86_64\\bin\\cmake.exe (')
-                res.append(download_expr.rstrip())
-                res.append('7z x -y -oC:\ cmake-3.24.2-windows-x86_64.zip')
-                res.append(')')
-        elif n == 'ninja':
-            if ctx.github:
-                # windows-2022 C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
-                pass
-            else:
-                pass
-        else:
-            print("install_tool({}) not implemented".format(n))
-
-    return "\n".join(res) + "\n"
 
 def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
@@ -1498,16 +1409,18 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\\mysql-{}-winx64\\lib'.format(ver))
     elif app == '7z':
         opts.env_path.append('C:\\Program Files\\7-Zip')
-    if app == 'git':
+    elif app == 'git':
         opts.env_path.append('C:\\Program Files\\Git\\cmd')
-
-    if app == 'sed':
+    elif app == 'sed':
         return 'set SED=C:\\Program Files\\Git\\usr\\bin\\sed.exe\n'
-    if app == 'diff':
-        return 'set DIFF=C:\\Program Files\\Git\\usr\\bin\\diff.exe'
-
-    if app == 'perl':
+    elif app == 'diff':
+        return 'set DIFF=C:\\Program Files\\Git\\usr\\bin\\diff.exe\n'
+    elif app == 'perl':
         opts.env_path.append('C:\\Strawberry\\perl\\bin')
+    elif app == 'cmake':
+        opts.env_path.append('C:\\Program Files\\CMake\\bin')
+    else:
+        raise ValueError("use not implemented for {}".format(app))
 
     return ''
 
