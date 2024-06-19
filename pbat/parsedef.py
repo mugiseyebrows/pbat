@@ -24,7 +24,8 @@ def parse_def(def_):
     for item in find_data(tree, 'then'):
         then = item.children[0].value
     for item in find_data(tree, 'depends'):
-        values = [ch.value for ch in item.children]
+        values = [ch.value for ch in item.children if ch.value != 'and']
+        #print("depends values", values)
         depends += values
     for item in find_data(tree, 'shell'):
         shell = item.children[0].value

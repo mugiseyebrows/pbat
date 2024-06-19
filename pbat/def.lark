@@ -4,7 +4,7 @@ start: "def" defname attr*
 
 then.1: "then" NAME
 
-depends: "depends" "on" NAME+
+depends: "depends" "on" (NAME | "and")+
 
 shell: "shell" NAME
 

@@ -4,48 +4,28 @@ import re
 import random
 import textwrap
 import yaml
+from collections import defaultdict
 
 # todo shell python bash pwsh
+
 
 try:
     from .parsemacro import parse_macro, ParseMacroError
     from .parsedef import parse_def
+    from .Opts import Opts
+    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES
 except ImportError:
     from parsemacro import parse_macro, ParseMacroError
     from parsedef import parse_def
+    from Opts import Opts
+    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES
 
 WARNING = 'This file is generated from {}, all edits will be lost'
 
-ON_PUSH = 1
-ON_TAG = 2
-ON_RELEASE = 3
-WINDOWS_2019 = "windows-2019"
-WINDOWS_2022 = "windows-2022"
-WINDOWS_LATEST = "windows-latest"
+
 CHECKSUM_ALGS = ['b2','md5','sha1','sha224','sha256','sha384','sha512']
 
-@dataclass
-class Opts:
-    debug: bool = False
-    clean: bool = False
-    curl_in_path: bool = False
-    curl_user_agent: str = None
-    curl_proxy: str = None
-    download_test: bool = True
-    unzip_test: bool = True
-    zip_test: bool = True
-    github: bool = False
-    zip_in_path = False
-    git_in_path = False
-    tar_in_path = False
-    patch_in_path = False
-    github_workflow = False
-    github_image: str = WINDOWS_LATEST
-    github_on: int = ON_PUSH
-    msys2_msystem: str = None
-    use_sed: bool = False
-    use_diff: bool = True
-    env_path: list[str] = field(default_factory=list)
+
 
 @dataclass
 class GithubUpload:
@@ -75,6 +55,11 @@ class GithubShellStep:
     condition: str = None
 
 @dataclass
+class GithubCacheStep:
+    path: list[str]
+    key: str
+
+@dataclass
 class GithubMatrix:
     matrix: dict = field(default_factory=dict)
     include: list = field(default_factory=list)
@@ -89,34 +74,12 @@ class GithubData:
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
     steps: list = field(default_factory=list)
+    cache: GithubCacheStep = None
 
 @dataclass
 class Ctx:
     github: bool
     shell: str
-
-MACRO_NAMES = [
-    'pushd_cd', 'popd_cd', 
-    'find_app',
-    'download', 
-    'zip', 'unzip',
-    'set_path', 
-    'foreach',
-    'copy_file', 'copy_tree', 'mkdir', 'rmdir', 'rm', 'move_file',
-    'git_clone', 'git_pull', 'patch', 
-    'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
-    'github_checkout', 'github_upload', 'github_release', 
-    'github_setup_msys2', 'github_setup_node',
-    'untar',
-    'if_arg', 
-    'log', 
-    'where',
-    'clean_dir', 'clean_file', 
-    'set_var',
-    'substr', 
-    'use_tool', 'install_tool', 'call_vcvars',
-    'use', 'install', 'add_path'
-]
 
 def get_dst_bat(src):
     dirname = os.path.dirname(src)
@@ -229,6 +192,17 @@ def make_setup_node_step(data: GithubSetupNode):
     }
     return obj
 
+def make_cache_step(data: GithubCacheStep):
+    obj = {
+        "name": "cache",
+        "uses": "actions/cache@v3",
+        "with": {
+            "path": data.path,
+            "key": data.key
+        }
+    }
+    return obj
+
 def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
 
     obj = dict()
@@ -268,323 +242,11 @@ def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
 
     return obj
 
-def count_parenthesis(line):
-    op = 0
-    cl = 0
-    is_str = False
-    for c in line:
-        if c == '"':
-            is_str = not is_str
-        elif c == '(' and not is_str:
-            op += 1
-        elif c == ')' and not is_str:
-            cl += 1
-    return op, cl
 
-def pat_spacejoin(*pat):
-    SPACE = "\\s*"
-    return SPACE.join(pat)
 
-def read(src, github):
 
-    def_line = dict()
 
-    defs = dict()
 
-    deps = dict()
-
-    thens = dict()
-
-    shells = dict()
-
-    conditions = dict()
-
-    opts = Opts()
-
-    lines = []
-
-    def pattern_join(*args):
-        return "".join(args)
-
-    def process_line(line, cwd):
-
-        PBAT_FILE = "([0-9a-z_-]+[.]pbat)"
-        START = "^"
-
-        pat = pat_spacejoin(START, 'include', '\\(', PBAT_FILE, '\\)')
-
-        m = re.match(pat, line, re.IGNORECASE)
-        if m:
-            path = os.path.join(cwd, m.group(1))
-            with open(path, encoding='utf-8') as f_:
-                for line in f_.readlines():
-                    lines.append(line)
-        else:
-            lines.append(line)
-
-    if isinstance(src, str):
-        cwd = os.path.dirname(src)
-        with open(src, encoding='utf-8') as f:
-            for i, line in enumerate(f):
-                process_line(line, cwd)
-    else:
-        # StringIO
-        cwd = os.getcwd()
-        for line in src:
-            process_line(line, cwd)
-
-    has_main = False
-    for line in lines:
-        if re.match('^def main', line):
-            has_main = True
-            break
-    if not has_main:
-        lines = ['def main\n'] + lines
-
-    lines_ = []
-
-    skip = set()
-
-    def unsplit_line(lines, i, skip: set):
-        tot = 0
-        res = []
-        for i in range(i, len(lines)):
-            skip.add(i)
-            line = lines[i]
-            res.append(line)
-            op, cl = count_parenthesis(line)
-            tot += (op - cl)
-            if tot == 0:
-                break
-        return " ".join(res) + "\n"
-
-    used = set()
-    chksum_used = set()
-
-    # unsplit
-    for i, line in enumerate(lines):
-        if i in skip:
-            continue
-
-        ID_NOCAP = "[0-9a-z_]+"
-        ID = "([0-9a-z_]+)"
-        SPACE = "\\s*"
-        START = "^"
-
-        pat_w_ret = pat_spacejoin(START,ID_NOCAP,"=",ID)
-        pat_wo_ret = pat_spacejoin(START,ID)
-
-        m1 = re.match(pat_w_ret, line, re.IGNORECASE)
-        m2 = re.match(pat_wo_ret, line, re.IGNORECASE)
-
-        name = None
-        if m1:
-            name = m1.group(1)
-        elif m2:
-            name = m2.group(1)
-
-        if name in MACRO_NAMES:
-            line = unsplit_line(lines, i, skip)
-            lines_.append(line)
-            used.add(name)
-            if name == 'download':
-                m = re.search(':({})\\s*='.format("|".join(CHECKSUM_ALGS)), line)
-                if m:
-                    alg = m.group(1)
-                    chksum_used.add(alg)
-        else:
-            lines_.append(line)
-
-    t = 1
-
-    lines = lines_
-    #print(lines)
-
-    for i, line in enumerate(lines):
-        if re.match("\\s*".join(["", "use", "\\(", "7z", "\\)"]), line):
-            opts.zip_in_path = True
-        if re.match("\\s*".join(["", "use", "\\(", "git", "\\)"]), line):
-            opts.git_in_path = True
-        if re.match("\\s*".join(["", "use", "\\(", "sed", "\\)"]), line):
-            opts.use_sed = True
-        if re.match("\\s*".join(["", "use", "\\(", "diff", "\\)"]), line):
-            opts.use_diff = True
-
-    name = None
-    for i, line in enumerate(lines):
-        #line = line.strip()
-        m = re.match('^\\s*(debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
-        if m is not None:
-            optname = m.group(1).replace("-","_")
-            optval = m.group(2) in ['on','true','1']
-            setattr(opts, optname, optval)
-            continue
-
-        m = re.match('^\\s*([a-z0-9_]+[_-]in[_-]path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
-        if m:
-            optname = m.group(1).replace("-","_")
-            if hasattr(opts, optname):
-                setattr(opts, optname, m.group(2) in ['on','true','1'])
-                continue
-        
-        ID = "([0-9a-z_-]+)"
-        START = "^"
-        END = "\\s*$"
-
-        pat = pat_spacejoin(START, 'msys2[_-]msystem', ID)
-        m = re.match(pat, line, re.IGNORECASE)
-        if m:
-            opts.msys2_msystem = m.group(1).strip()
-            continue
-
-        pat = pat_spacejoin(START, 'github[_-]image', ID)
-        m = re.match(pat, line)
-        if m:
-            opts.github_image = m.group(1).strip()
-            continue
-        
-        pat = pat_spacejoin(START, 'github[_-]on', ID)
-        m = re.match(pat, line)
-        if m:
-            trigger = m.group(1).strip()
-            opts.github_on = {
-                "push": ON_PUSH,
-                "release": ON_RELEASE,
-                "tag": ON_TAG
-            }[trigger]
-            continue
-
-        m = re.match('^curl_user_agent\\s+(safari|chrome|mozilla)$', line)
-        if m is not None:
-            opts.curl_user_agent = m.group(1)
-            continue
-        m = re.search('^curl_proxy\\s+(.*)$', line)
-        if m is not None:
-            opts.curl_proxy = m.group(1).rstrip()
-            continue
-        
-        ID = "([0-9a-z_]+)"
-        IDS = "([0-9a-z_ ]*)"
-        START = "^"
-
-        pat = pat_spacejoin(START, 'def\\s+', ID)
-
-        m = re.match(pat, line, re.IGNORECASE)
-        if m is not None:
-
-            name, then, deps_, shell, condition = parse_def(line)
-            #print("name {} then {} deps_ {} shell {}".format(name, then, deps_, shell))
-
-            deps_ = []
-            if shell is None:
-                shell = 'cmd'
-
-            deps[name] = deps_
-            if then is not None:
-                thens[name] = then
-            shells[name] = shell
-
-            if name in defs:
-                print("redefinition {} on line {}, first defined on line {}".format(name, i+1, def_line[name]))
-            def_line[name] = i
-            defs[name] = []
-
-            if condition is not None:
-                conditions[name] = condition
-
-            #print("line {} def {} depends on {} then {} shell {}".format(i, name, deps_, then, shell))
-            
-            continue
-        
-        # todo calculate order after parse
-        m = re.match('^\\s*order\\s+(.*)$', line)
-        if m is not None:
-            names = re.split('\\s+', m.group(1))
-            
-            names_ = insert_deps(names, deps)
-            for n1, n2 in zip(names_, names_[1:]):
-                thens[n1] = n2
-            continue
-        if line == '':
-            continue
-        if re.match("^\\s*#", line):
-            continue
-
-        m = re.match('(\\s*)sed (.*)', line)
-        if m and opts.use_sed:
-            line = m.group(1) + '"%SED%" ' + m.group(2)
-        
-        m = re.match('(\\s*)diff (.*)', line)
-        if m and opts.use_diff:
-            line = m.group(1) + '"%DIFF%" ' + m.group(2)
-
-        if name is not None:
-            defs[name].append(line + "\n")
-
-    for n1, n2 in thens.items():
-        if n1 not in defs:
-            if n1 != "end":
-                print("missing def {}".format(n1))
-        if n2 not in defs:
-            if n2 != "end":
-                print("missing def {}".format(n2))
-    
-    if 'download' in used and not opts.curl_in_path and not github:
-        defs['main'] = ['CURL = find_app([C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe])\n'] + defs['main']
-    if ('zip' in used or 'unzip' in used) and not opts.zip_in_path and not github:
-        defs['main'] = ['P7Z = find_app([C:\\Program Files\\7-Zip\\7z.exe])\n'] + defs['main']
-    if 'git_clone' in used and not opts.git_in_path:
-        defs['main'] = ['GIT = find_app([C:\\Program Files\\Git\\cmd\\git.exe])\n'] + defs['main']
-    if 'patch' in used and not opts.patch_in_path:
-        defs['main'] = ['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])\n'] + defs['main']
-    if 'untar' in used and not opts.tar_in_path:
-        defs['main'] = ['TAR = find_app([C:\\Program Files\\Git\\usr\\bin\\tar.exe])\n'] + defs['main']
-        defs['main'] = ['GZIP = find_app([C:\\Program Files\\Git\\usr\\bin\\gzip.exe])\n'] + defs['main']
-
-    if 'msys2' in shells.values():
-        if github:
-            pass
-        else:
-            defs['main'] = [
-                'MSYS2 = find_app([C:\\msys64\\usr\\bin\\bash.exe])\n',
-                'set_var(CHERE_INVOKING, yes)\n'
-            ] + defs['main']
-    if 'python' in shells.values():
-        if github:
-            pass
-        else:
-            defs['main'] = ["""PYTHON = find_app([
-    %LOCALAPPDATA%\\Programs\\Python\\Python39\\python.exe,
-    C:\\Python39\\python.exe,
-    %LOCALAPPDATA%\\Programs\\Python\\Python310\\python.exe,
-    C:\\Python310\\python.exe,
-    %LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe,
-    C:\\Python311\\python.exe,
-    C:\\Miniconda3\\python.exe,
-    %USERPROFILE%\\Miniconda3\\python.exe,
-    C:\\Anaconda3\\python.exe,
-    %USERPROFILE%\\Anaconda3\\python.exe
-])
-"""] + defs['main']
-
-    if 'pwsh' in shells.values():
-        if github:
-            pass
-        else:
-            defs['main'] = ["PWSH = find_app([C:\\Program Files\\PowerShell\\7\\pwsh.exe])\n"] + defs['main']
-
-    if 'node' in shells.values():
-        if github:
-            pass
-        else:
-            defs['main'] = ["NODE = find_app([C:\\Program Files\\nodejs\\node.exe])\n"] + defs['main']
-
-    for alg in chksum_used:
-        exe = alg + 'sum.exe'
-        var = (alg + 'sum').upper()
-        defs['main'] = ['{} = find_app([C:\\Program Files\\Git\\usr\\bin\\{}])\n'.format(var, exe)] + defs['main']
-    
-    return defs, thens, shells, opts, conditions
 
 def insert_deps(names, deps):
     res = []
@@ -595,7 +257,7 @@ def insert_deps(names, deps):
                 if d not in res:
                     res.append(d)
         res.append(n)
-
+    #print('deps', deps)
     #print('before insert:', names)
     #print('after insert:', res)
     return res
@@ -616,9 +278,10 @@ def uniq(vs):
             res.append(v)
     return res
 
-def render_one(name, defs, thens, shells, opts: Opts, src_name, echo_off=True, warning=True):
+def render_one(name, defs, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
 
     #print("render one", name, opts.env_path)
+    #print("render_one")
 
     res = []
     if not opts.debug and echo_off:
@@ -628,7 +291,18 @@ def render_one(name, defs, thens, shells, opts: Opts, src_name, echo_off=True, w
         res += ['rem {}\n'.format(WARNING.format(src_name))]
 
     if len(opts.env_path) > 0 and shells[name] == 'cmd':
-        res += ['set PATH={};%PATH%'.format(";".join(uniq(opts.env_path))) + '\n']
+        if opts.clear_path:
+            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+        else:
+            pat = 'set PATH={};%PATH%'
+        res += [pat.format(";".join(uniq(opts.env_path))) + '\n']
+
+    defs_ = {"top": top}
+    thens_ = dict()
+    shells_ = {"top": 'cmd'}
+    expand_macros(defs_, thens_, shells_, opts)
+    #print(defs_['top'])
+    res.extend(defs_['top'])
 
     if 'main' not in defs:
         print("main not defined")
@@ -645,7 +319,7 @@ def render_one(name, defs, thens, shells, opts: Opts, src_name, echo_off=True, w
             res.append(macro_log(name, [name]))
         res.append("".join(lines))
         res.append(":{}_end\n".format(name))
-        #res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
+        res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
         res.append("\n")
 
     while(True):
@@ -663,7 +337,84 @@ def dedent(text):
         return line
     return "\n".join([d(line) for line in text.split('\n') if line.strip() != ''])
 
-def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, warning=True):
+def insert_before(a, b, keys):
+    if b not in keys:
+        return False
+    if a in keys and b in keys:
+        if keys.index(a) < keys.index(b):
+            return False
+    if a in keys:
+        keys.pop(keys.index(a))
+    keys.insert(keys.index(b), a)
+    return True
+
+def insert_after(a, b, keys):
+    if b not in keys:
+        return False
+    if a in keys and b in keys:
+        if keys.index(a) > keys.index(b):
+            return False
+    if a in keys:
+        keys.pop(keys.index(a))
+    keys.insert(keys.index(b) + 1, a)
+    return True
+
+def compute_order(defs, deps, thens, order):
+    thens_ = dict(thens)
+    if order is None:
+        main = list(defs.keys())[-1]
+        for i in range(1000):
+            if len(deps[main]) > 0:
+                main = deps[main][0]
+            else:
+                break
+        for k, vs in deps.items():
+            if main in vs:
+                main = vs[0]
+            o = vs + [k]
+            for a, b in zip(o, o[1:]):
+                if a in thens_:
+                    print("warning: order {} -> {} changed to order {} -> {}".format(a, thens_[a], a, b))
+                thens_[a] = b
+        keys = [main]
+    else:
+        keys = order
+        for k, vs in deps.items():
+            #print("k, vs", k, vs)
+            for v in reversed(vs):
+                if v not in keys:
+                    if k in keys:
+                        insert_before(v, k, keys)
+                    else:
+                        print("warning: {} not in order".format(k))
+        for a, b in zip(keys, keys[1:]):
+            if a in thens_:
+                print("warning: order {} -> {} changed to order {} -> {}".format(a, thens_[a], a, b))
+            thens_[a] = b
+    
+    for i in range(1000):
+        changed = False
+        for a, b in thens_.items():
+            if a in keys:
+                if b not in keys:
+                    keys.append(b)
+                    changed = True
+        if not changed:
+            break
+
+    #print("defs.keys()",defs.keys())
+    #print("reachable", keys)
+    for n in deps.keys():
+        if n not in keys:
+            print("warning: not reachable {}".format(n))
+
+    return keys, thens_
+
+
+def render_local_main(defs, deps, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
+
+    #print("render_local_main")
+
     res = []
 
     files = []
@@ -674,17 +425,43 @@ def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, 
     if warning:
         res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
 
-    if len(opts.env_path) > 0 and shells['main'] == 'cmd':
-        res += ['set PATH={};%PATH%'.format(";".join(uniq(opts.env_path))) + '\n']
+    if len(opts.env_path) > 0:
+        if opts.clear_path:
+            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+        else:
+            pat = 'set PATH={};%PATH%'
+        res += [pat.format(";".join(uniq(opts.env_path))) + '\n']
 
-    if 'main' not in defs:
-        print("main not defined")
-        return ""
+    defs_ = {"top": top}
+    thens_ = dict()
+    shells_ = {"top": 'cmd'}
+    expand_macros(defs_, thens_, shells_, opts)
+    #print(defs_['top'])
+    res.extend(defs_['top'])
 
-    keys = ['main'] + without(defs.keys(), 'main')
+    keys, thens_ = compute_order(defs, deps, thens, order)
+    
+    """
+    if opts.main_def:
+        main_def = opts.main_def
+    else:
+        main_def = 'main'
 
+    keys = [main_def] + without(defs.keys(), main_def)
+    """
+
+    #print("order", order)
+    #return "".join(res), files
+
+    
+
+    #print("deps", deps)
+    #print("thens", thens)
+
+    """
     if not opts.clean:
         keys = without(keys, 'clean')
+    """
 
     for name in keys:
         lines = defs[name]
@@ -740,7 +517,15 @@ def render_local_main(defs, thens, shells, opts: Opts, src_name, echo_off=True, 
             raise Exception('unknown shell {}'.format(shells[name]))
 
         res.append(":{}_end\n".format(name))
-        res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
+        
+        goto = None
+        if name in thens_:
+            if thens_[name] != 'exit':
+                goto = "goto {}_begin\n".format(thens_[name])
+        if goto is None:
+            goto = "exit /b\n"
+
+        res.append(goto)
         res.append("\n")
 
     while(True):
@@ -874,6 +659,8 @@ def macro_find_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     return "".join(tests) + "goto {}_begin\n".format(label) + ":" + label_success + "\n" + "".join(puts)
 
 def quoted(s):
+    if "*" in s:
+        return s
     if ' ' in s or '%' in s or '+' in s:
         return '"' + s + '"'
     return s
@@ -956,49 +743,44 @@ def kwarg_value(kwargs, *names):
 
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
+    if ctx.shell == 'cmd':
+        opts.env_path.append('C:\\Program Files\\7-Zip')
+
     src = args[0]
-    force = kwargs.get('force')
-    keep = kwargs.get('keep')
+
+    if len(args) == 2:
+        print("unzip with 2 args, did you mean :test?", args)
+
+    #force = kwargs.get('force')
+    #keep = kwargs.get('keep')
+    test = kwarg_value(kwargs, 'test', 't')
     output = kwarg_value(kwargs, 'output', 'o')
-    files = kwarg_value(kwargs, 'files', 'f')
+    #files = kwarg_value(kwargs, 'files', 'f')
 
-    if isinstance(files, str):
-        files = [files]
-
-    if len(args) > 1:
-        test = args[1]
-    else:
-        test = None
-
+    """
     if opts.zip_in_path or ctx.github:
         cmd = ['7z']
     else:
         cmd = ['"%P7Z%"']
+    """
+    cmd = ['7z']
 
     cmd = cmd + ['x', '-y']
     if output:
         cmd.append("-o{}".format(quoted(output)))
     cmd.append(quoted(src))
 
-    if files is not None:
-        for f in files:
-            cmd.append(quoted(f))
+    for arg in args[1:]:
+        cmd.append(quoted(arg))
 
     exp = " ".join(cmd) + "\n"
 
-    if force or opts.unzip_test == False:
-        pass
-    elif test:
+    if test:
         exp = "if not exist {} ".format(quoted(test)) + exp
     else:
         pass
 
-    if keep:
-        clean_exp = ""
-    else:
-        #print(os.path.splitext(src)[1])
-        # todo optional clean
-        clean_exp = ""
+    clean_exp = ""
     return exp, clean_exp
 
 
@@ -1044,6 +826,9 @@ def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
+    if ctx.shell == 'cmd':
+        opts.env_path.append('C:\\Program Files\\7-Zip')
+
     COMPRESSION_MODE = {
         "-mx0": "copy",
         "-mx1": "fastest",
@@ -1085,7 +870,7 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     return " ".join(cmd) + "\n"
 
 def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p", "strip"})
+    validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p1"})
     if opts.patch_in_path:
         patch = "patch"
     else:
@@ -1094,12 +879,11 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     cmd = [patch]
     if kwarg_value(kwargs, 'N', "forward"):
         cmd.append('-N')
-    p = kwarg_value(kwargs, "p", "strip")
-    if p:
-        cmd.append('-p{}'.format(p))
+    p1 = kwarg_value(kwargs, "p1")
+    if p1:
+        cmd.append('-p1')
 
     cmd = cmd + ["-i", quoted(args[0])]
-
     return " ".join(cmd) + "\n"
     
 def macro_mkdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1151,10 +935,8 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     if dir:
         basename = dir
 
-    if opts.git_in_path:
-        git = 'git'
-    else:
-        git = '"%GIT%"'
+    opts.env_path.append('C:\\Program Files\\Git\\cmd')
+    git = 'git'
 
     clone = [git, 'clone']
     if submodules is not None:
@@ -1222,10 +1004,15 @@ def macro_move_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     src, dst = args
     return "move /y {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_copy_tree(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("copy_tree", args, kwargs, ret, 2, 2, set(), False)
+def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("copy_dir", args, kwargs, ret, 2, 2, ['q'], False)
     src, dst = args
-    return "xcopy /s /e /y /i {} {}\n".format(quoted(src), quoted(dst))
+    keys = ['s','e','y','i']
+    q = kwargs.get('q')
+    if q:
+        keys.append('q')
+    keys_ = " ".join(["/{}".format(k) for k in keys])
+    return "xcopy {} {} {}\n".format(keys_, quoted(src), quoted(dst))
 
 
 def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1234,6 +1021,11 @@ def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata:
     else:
         return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
 
+def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    if len(args) < 1:
+        print("macro if_exist_return requires an argument")
+        return ''
+    return 'if exist {} goto {}_end'.format(quoted(args[0]), name)
 
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
@@ -1267,6 +1059,12 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
     githubdata.upload = GithubUpload(name, path)
     return '\n'
 
+def macro_github_cache(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    key = kwarg_value(kwargs, "k", "key")
+    if key is None:
+        raise ValueError("github_cache requires key arg :k or :key")
+    githubdata.cache = GithubCacheStep(args, key)
+
 def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
     githubdata.matrix.matrix[ret] = args[0]
@@ -1298,7 +1096,7 @@ def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githu
 
 def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
-        return '\n'
+        return 'pushd %GITHUB_WORKSPACE%\n'
     return 'pushd %~dp0\n'
 
 def macro_popd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1354,25 +1152,25 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
         else:
             raise ValueError("install(qt, {}) not implemented".format(ver))
 
-    if app in ['mingw', 'mingw64']:
+    elif app in ['mingw', 'mingw64']:
         if ver == '8.1.0':
             opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
             return 'if not exist "C:\\Qt\\Tools\\mingw810_64\\bin\\gcc.exe" aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O C:\\Qt'
         else:
             raise ValueError("install(mingw, {}) not implemented".format(ver))
 
-    if app in ['aqt', 'aqtinstall']:
+    elif app in ['aqt', 'aqtinstall']:
         return 'where aqt > NUL || pip install aqtinstall'
 
-    if app == 'mugideploy':
+    elif app == 'mugideploy':
         return 'where mugideploy > NUL || pip install mugideploy'
 
-    if app == 'mugicli':
+    elif app == 'mugicli':
         return 'where pyfind > NUL || pip install mugicli'
 
-    if app == 'mugisync':
+    elif app == 'mugisync':
         return 'where mugisync > NUL || pip install mugisync'
-
+    
     raise ValueError("install({}) not implemented".format(app))
 
 def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1419,6 +1217,30 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\\Strawberry\\perl\\bin')
     elif app == 'cmake':
         opts.env_path.append('C:\\Program Files\\CMake\\bin')
+    elif app == 'ninja':
+        opts.env_path.append('C:\\Program Files\\Meson')
+    elif app == 'mingw':
+        if ver in ['5', '5.4.0']:
+            opts.env_path.append('C:\\mingw540_32\\bin')
+        elif ver == '8':
+            opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
+        elif ver == '11':
+            opts.env_path.append('C:\\mingw1120_64\\bin')
+        else:
+            raise ValueError("use not implemented for {} {}".format(app, ver))
+    elif app == 'qt':
+        if ver == '6':
+            ver = '6.7.1'
+        elif ver == '5':
+            ver = '5.15.2'
+        elif ver == '4':
+            ver = '4.8.7'
+        if ver.startswith('6.'):
+            opts.env_path.append('C:\\Qt\\{}\\mingw1120_64\\bin'.format(ver))
+        elif ver.startswith('5.'):
+            opts.env_path.append('C:\\Qt\\{}\\mingw81_64\\bin'.format(ver))
+        elif ver.startswith('4.'):
+            opts.env_path.append('C:\\Qt-{}\\bin'.format(ver))
     else:
         raise ValueError("use not implemented for {}".format(app))
 
@@ -1428,6 +1250,10 @@ def macro_add_path(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     #print("add_path args", args)
     for arg in args:
         opts.env_path.append(arg)
+    return ''
+
+def macro_clear_path(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    opts.clear_path = True
     return ''
 
 def maybe_macro(line):
@@ -1451,11 +1277,15 @@ def reindent(expr, orig):
     #print(expr, lines)
     return "\n".join(lines) + "\n"
 
-def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubData):
+def expand_macros(defs, thens, shells, opts: Opts, github: bool = False, githubdata: GithubData = None):
 
+    """
     if 'clean' not in defs:
         defs['clean'] = []
         shells['clean'] = 'cmd'
+    """
+    if githubdata is None:
+        githubdata = GithubData()
 
     need_rewrap = set()
 
@@ -1494,10 +1324,12 @@ def expand_macros(defs, thens, shells, opts: Opts, github, githubdata: GithubDat
                 except ParseMacroError as e:
                     pass
 
+    """
     if len(defs['clean']) > 0:
         defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
     else:
         del defs['clean']
+    """
 
 def write(path, text):
     if isinstance(path, str):
@@ -1579,7 +1411,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     for github in [False, True]:
         githubdata = GithubData()
         
-        defs, thens, shells, opts, conditions = read(src, github)
+        defs, deps, thens, top, order, shells, opts, conditions = parse_script(src, github)
 
         if github and not opts.github_workflow:
             continue
@@ -1601,8 +1433,13 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             if githubdata.setup_node:
                 steps.append(make_setup_node_step(githubdata.setup_node))
 
-            for name in defnames_ordered(defs, thens):
-                text = filter_empty_lines(render_one(name, defs, thens, shells, opts, src_name, echo_off = False, warning = False))
+            if githubdata.cache:
+                steps.append(make_cache_step(githubdata.cache))
+
+            keys, thens_ = compute_order(defs, deps, thens, order)
+
+            for name in keys:
+                text = filter_empty_lines(render_one(name, defs, thens, shells, top, order, opts, src_name, echo_off = False, warning = False))
                 text = dedent(text)
                 github_check_cd(text)
                 if text == '':
@@ -1620,7 +1457,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             dst_paths.append(dst_workflow)
         else:
 
-            text, files = render_local_main(defs, thens, shells, opts, src_name, echo_off, warning)
+            text, files = render_local_main(defs, deps, thens, shells, top, order, opts, src_name, echo_off, warning)
 
             for file_name, file_content in files:
                 dst_path = os.path.join(os.path.dirname(src), file_name)
