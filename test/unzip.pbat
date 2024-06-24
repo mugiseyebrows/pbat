@@ -1,0 +1,9 @@
+def main
+    rem no opts
+    unzip(arc.zip)
+    rem test file.txt
+    unzip(arc.zip, :t=file.txt)
+    rem 3 args
+    unzip(arc.zip, file1.txt, file2.txt)
+    rem 3 args + output foo
+    unzip(arc.zip, :o=foo, file1.txt, file2.txt)

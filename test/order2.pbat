@@ -1,0 +1,13 @@
+def foo_dep
+    rem foo_dep
+
+def foo depends on foo_dep
+    rem foo
+
+def bar_dep
+    rem bar_dep
+
+def bar depends on bar_dep
+    rem bar
+
+order foo bar
