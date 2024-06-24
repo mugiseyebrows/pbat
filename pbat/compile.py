@@ -55,7 +55,10 @@ def main():
             #print(src, dst_bat, dst_workflow)
             read_compile_write(src, dst_bat, dst_workflow)
         except Exception as e:
-            print(e)
+            if os.environ.get('DEBUG_PBAT') == '1':
+                raise e
+            else:
+                print(e)
 
 if __name__ == "__main__":
     main()

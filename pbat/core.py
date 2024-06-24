@@ -5,6 +5,7 @@ import random
 import textwrap
 import yaml
 from collections import defaultdict
+import hashlib
 
 # todo shell python bash pwsh
 
@@ -56,6 +57,7 @@ class GithubShellStep:
 
 @dataclass
 class GithubCacheStep:
+    name: str
     path: list[str]
     key: str
 
@@ -74,7 +76,7 @@ class GithubData:
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
     steps: list = field(default_factory=list)
-    cache: GithubCacheStep = None
+    cache: list[GithubCacheStep] = field(default_factory=list)
 
 @dataclass
 class Ctx:
@@ -164,6 +166,9 @@ def save_workflow(path, steps, opts: Opts, githubdata: GithubData):
     with open(path, 'w', encoding='utf-8') as f:
         f.write(yaml.dump(data, None, Dumper=Dumper, sort_keys=False))
 
+def make_checkout_step():
+    return {"name": "checkout", "uses": "actions/checkout@v4"}
+
 def make_setup_msys2_step(data: GithubSetupMsys2, opts: Opts):
     if data.msystem:
         msystem = data.msystem
@@ -192,13 +197,13 @@ def make_setup_node_step(data: GithubSetupNode):
     }
     return obj
 
-def make_cache_step(data: GithubCacheStep):
+def make_cache_step(step: GithubCacheStep):
     obj = {
-        "name": "cache",
+        "name": step.name,
         "uses": "actions/cache@v3",
         "with": {
-            "path": data.path,
-            "key": data.key
+            "path": str_or_literal(step.path),
+            "key": step.key
         }
     }
     return obj
@@ -304,9 +309,11 @@ def render_one(name, defs, thens, shells, top, order, opts: Opts, src_name, echo
     #print(defs_['top'])
     res.extend(defs_['top'])
 
+    """
     if 'main' not in defs:
         print("main not defined")
         return ""
+    """
 
     keys = [ name ]
 
@@ -359,15 +366,42 @@ def insert_after(a, b, keys):
     keys.insert(keys.index(b) + 1, a)
     return True
 
+
+def update_chain(deps, chain, tested):
+    name = next(filter(lambda n: n not in tested, chain), None)
+    if name is None:
+        return False
+    tested.add(name)
+    def get_deps(name):
+        if name in deps:
+            return deps[name]
+        return []
+    ins = [n for n in get_deps(name) if n not in chain]
+    ix = chain.index(name)
+    for i, n in enumerate(ins):
+        chain.insert(ix + i, n)
+    return True
+
 def compute_order(defs, deps, thens, order):
     thens_ = dict(thens)
     if order is None:
         main = list(defs.keys())[-1]
-        for i in range(1000):
-            if len(deps[main]) > 0:
-                main = deps[main][0]
-            else:
-                break
+        chain = [main]
+        tested = set()
+        #print("chain", chain)
+        while update_chain(deps, chain, tested):
+            #print("chain", chain)
+            pass
+        # todo insert thens
+
+        #print("thens", thens)
+        if len(thens) > 0:
+            raise ValueError("not implemented")
+
+        for a, b in zip(chain, chain[1:]):
+            thens_[a] = b
+
+        """
         for k, vs in deps.items():
             if main in vs:
                 main = vs[0]
@@ -376,7 +410,8 @@ def compute_order(defs, deps, thens, order):
                 if a in thens_:
                     print("warning: order {} -> {} changed to order {} -> {}".format(a, thens_[a], a, b))
                 thens_[a] = b
-        keys = [main]
+        """
+        keys = chain
     else:
         keys = order
         for k, vs in deps.items():
@@ -842,15 +877,8 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     validate_args("zip", args, kwargs, ret, 2, 2, kwnames, False)
 
     src, dst = args
-    if opts.zip_in_path or ctx.github:
-        zip = '7z'
-    else:
-        zip = '"%P7Z%"'
-
-    if opts.zip_in_path:
-        cmd = '7z'
-    else:
-        cmd = '"%P7Z%"'
+    zip = '7z'
+    
     #cmd = cmd + ' a -y {} {}\n'.format(quoted(dst), quoted(src))
     flags = ['-y']
     if kwarg_value(kwargs, "lzma"):
@@ -902,6 +930,12 @@ def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
         return "rm -rf {}\n".format(quoted(arg))
     else:
         raise Exception("rmdir not implemented for shell {}".format(ctx.shell))
+    
+def macro_github_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    if ctx.github:
+        arg = args[0]
+        return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
+    return '\n'
 
 def macro_rmdir(*args):
     return macro_clean_dir(*args)
@@ -1016,10 +1050,17 @@ def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
 
 def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+
+    opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build')
+    opts.env_path.append('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build')
+
+    """
     if ctx.github:
         return 'call "{}"\n'.format('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat')
     else:
         return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
+    """
+    return 'call vcvars64.bat'
 
 def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if len(args) < 1:
@@ -1030,8 +1071,7 @@ def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubd
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
     for n in args:
-        res.append('echo where {}'.format(n))
-        res.append('where {}'.format(n))
+        res.append('where {} || echo {} not found'.format(n, n))
     return "\n".join(res) + "\n"
 
 def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1053,17 +1093,25 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
         path = arg
     else:
         path = [arg]
-    name = kwarg_value(kwargs, "n", "name")
-    if name is None:
-        name = os.path.splitext(os.path.basename(path[0]))[0]
-    githubdata.upload = GithubUpload(name, path)
+    upload_name = kwarg_value(kwargs, "n", "name")
+    if upload_name is None:
+        upload_name = os.path.splitext(os.path.basename(path[0]))[0]
+        upload_name = upload_name.replace('*', '')
+    githubdata.upload = GithubUpload(upload_name, path)
     return '\n'
 
 def macro_github_cache(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    step_name = kwarg_value(kwargs, "n", "name")
+    paths = args
+    if len(paths) == 0:
+        raise ValueError("github_cache() requires at least one path as argument")
     key = kwarg_value(kwargs, "k", "key")
+    if step_name is None:
+        step_name = "cache {}".format(" ".join(paths))
     if key is None:
-        raise ValueError("github_cache requires key arg :k or :key")
-    githubdata.cache = GithubCacheStep(args, key)
+        key = hashlib.md5(";".join(paths)).digest().hex()
+    githubdata.cache.append(GithubCacheStep(step_name, paths, key))
+    return '\n'
 
 def macro_github_matrix(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     validate_args("github_matrix", args, kwargs, ret, 1, 1, set(), True)
@@ -1174,7 +1222,6 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
     raise ValueError("install({}) not implemented".format(app))
 
 def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-
     ver = None
     arch = None
     if len(args) == 3:
@@ -1219,6 +1266,9 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\\Program Files\\CMake\\bin')
     elif app == 'ninja':
         opts.env_path.append('C:\\Program Files\\Meson')
+        # github
+        opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
+        opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
     elif app == 'mingw':
         if ver in ['5', '5.4.0']:
             opts.env_path.append('C:\\mingw540_32\\bin')
@@ -1425,7 +1475,7 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             
             steps = []
             if githubdata.checkout:
-                steps.append({"uses": "actions/checkout@v4", "name": "checkout"})
+                steps.append(make_checkout_step())
 
             if githubdata.setup_msys2:
                 steps.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
@@ -1433,8 +1483,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             if githubdata.setup_node:
                 steps.append(make_setup_node_step(githubdata.setup_node))
 
-            if githubdata.cache:
-                steps.append(make_cache_step(githubdata.cache))
+            #if githubdata.cache:
+            for item in githubdata.cache:
+                steps.append(make_cache_step(item))
 
             keys, thens_ = compute_order(defs, deps, thens, order)
 
