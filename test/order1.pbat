@@ -1,8 +1,0 @@
-def get_compiler
-    rem get_compiler
-    
-def get_source
-    rem get_souce
-
-def compile depends on get_source and get_compiler
-    rem compile
