@@ -1,3 +1,1 @@
-include pbat/examples/*.pbat
-include pbat/examples/*.bat
 include pbat/*.lark
