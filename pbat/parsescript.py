@@ -16,7 +16,7 @@ MACRO_NAMES = [
     'git_clone', 'git_pull', 'patch', 
     'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
     'github_checkout', 'github_upload', 'github_release', 'github_cache',
-    'github_setup_msys2', 'github_setup_node',
+    'github_setup_msys2', 'github_setup_node', 'github_setup_java',
     'untar',
     'if_arg', 
     'log', 

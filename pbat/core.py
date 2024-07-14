@@ -38,6 +38,11 @@ class GithubSetupNode:
     node_version: int = None
 
 @dataclass
+class GithubSetupJava:
+    distribution: str = None
+    java_version: int = None
+
+@dataclass
 class GithubSetupMsys2:
     msystem: str = None
     install: str = None
@@ -75,6 +80,7 @@ class GithubData:
     matrix: GithubMatrix = field(default_factory=GithubMatrix)
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
+    setup_java: GithubSetupJava = None
     steps: list = field(default_factory=list)
     cache: list[GithubCacheStep] = field(default_factory=list)
 
@@ -192,15 +198,27 @@ def make_setup_msys2_step(data: GithubSetupMsys2, opts: Opts):
 
 def make_setup_node_step(data: GithubSetupNode):
     obj = {
+        "name": "setup node",
         "uses": "actions/setup-node@v3",
         "with": {"node-version": data.node_version}
+    }
+    return obj
+
+def make_setup_java_step(data: GithubSetupJava):
+    obj = {
+        "name": "setup java",
+        "uses": "actions/setup-java@v4",
+        "with": {
+            "distribution": data.distribution,
+            "java-version": data.java_version
+        }
     }
     return obj
 
 def make_cache_step(step: GithubCacheStep):
     obj = {
         "name": step.name,
-        "uses": "actions/cache@v3",
+        "uses": "actions/cache@v4",
         "with": {
             "path": str_or_literal(step.path),
             "key": step.key
@@ -1142,6 +1160,12 @@ def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githu
     githubdata.setup_node = GithubSetupNode(node_version)
     return '\n'
 
+def macro_github_setup_java(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("setup_java", args, kwargs, ret, 2, 2, {})
+    distribution, java_version = args
+    githubdata.setup_java = GithubSetupJava(distribution, java_version)
+    return '\n'
+
 def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
         return 'pushd %GITHUB_WORKSPACE%\n'
@@ -1482,6 +1506,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
 
             if githubdata.setup_node:
                 steps.append(make_setup_node_step(githubdata.setup_node))
+
+            if githubdata.setup_java:
+                steps.append(make_setup_java_step(githubdata.setup_java))
 
             #if githubdata.cache:
             for item in githubdata.cache:
