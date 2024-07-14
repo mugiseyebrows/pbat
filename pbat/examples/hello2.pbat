@@ -1,6 +1,0 @@
-
-def foo
-    echo this is foo
-    
-def main then foo
-    echo this is main

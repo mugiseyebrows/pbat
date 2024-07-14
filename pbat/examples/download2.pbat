@@ -1,5 +1,0 @@
-
-def main
-    download(https://altushost-swe.dl.sourceforge.net/project/qwt/qwt/6.2.0/qwt-6.2.0.zip, qwt-6.2.0.zip)
-
-curl_in_path 1

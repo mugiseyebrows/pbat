@@ -1,9 +1,0 @@
-def dist
-    python setup.py bdist_wheel
-
-def upload depends on dist
-    twine upload dist\app-0.0.1-py3-none-any.whl
-
-def main
-    
-order main upload

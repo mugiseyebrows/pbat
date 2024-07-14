@@ -1,3 +1,0 @@
-# this scripts prints hello and exits
-def main
-    echo hello
