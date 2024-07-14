@@ -12,21 +12,23 @@ MACRO_NAMES = [
     'zip', 'unzip',
     'set_path', 
     'foreach',
-    'copy_file', 'copy_dir', 'mkdir', 'rmdir', 'github_rmdir', 'rm', 'move_file',
+    'copy', 'xcopy', 'mkdir', 'rmdir', 'move', 'del',
     'git_clone', 'git_pull', 'patch', 
     'github_matrix', 'github_matrix_include', 'github_matrix_exclude', 
     'github_checkout', 'github_upload', 'github_release', 'github_cache',
     'github_setup_msys2', 'github_setup_node', 'github_setup_java',
-    'untar',
     'if_arg', 
     'log', 
     'where',
-    'clean_dir', 'clean_file', 
     'set_var',
     'substr', 
     'use_tool', 'install_tool', 'call_vcvars',
     'use', 'install', 'add_path',
     'if_exist_return', 'clear_path'
+]
+
+DEPRECATED_MACRO_NAMES = [
+    'github_rmdir', 'rm', 'move_file', 'copy_file', 'copy_dir', 'untar', 'clean_dir', 'clean_file'
 ]
 
 try:

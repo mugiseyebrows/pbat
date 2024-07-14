@@ -14,12 +14,12 @@ try:
     from .parsemacro import parse_macro, ParseMacroError
     from .parsedef import parse_def
     from .Opts import Opts
-    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES
+    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES
 except ImportError:
     from parsemacro import parse_macro, ParseMacroError
     from parsedef import parse_def
     from Opts import Opts
-    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES
+    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES
 
 WARNING = 'This file is generated from {}, all edits will be lost'
 
@@ -783,9 +783,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     else:
         raise Exception('not implemented for shell {}'.format(shell))
 
-    clean_exp = None
-
-    return exp, clean_exp
+    return exp
 
 def kwarg_value(kwargs, *names):
     for name in names:
@@ -833,48 +831,6 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     else:
         pass
 
-    clean_exp = ""
-    return exp, clean_exp
-
-
-def macro_untar(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    #print(args)
-    shell = ctx.shell
-    src = args[0]
-    if len(args) > 1:
-        test = args[1]
-    else:
-        test = None
-
-    if shell == 'cmd':
-        if opts.tar_in_path:
-            cmds = ['tar -xf {}'.format(quoted(src))]
-            if test:
-                return if_group("not exist {}".format(quoted(test)), cmds)
-            return "\n".join(cmds) + "\n"
-        else:
-            ext = os.path.splitext(src)[1]
-            if ext == '.gz':
-                cmds = [
-                    '"%GZIP%" -k -d {}'.format(src), 
-                    '"%TAR%" -xf {}'.format(os.path.splitext(src)[0])
-                ]
-                if test:
-                    return if_group("exist {}".format(quoted(test)), cmds)
-                else:
-                    return "\n".join(cmds) + "\n"
-            else:
-                raise Exception("untar not implemented for ext {}".format(ext))
-    elif shell == 'msys2':
-        cmd = 'tar -xf {}'.format(quoted(src))
-        if test:
-            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(src), cmd)
-        else:
-            exp = cmd
-        return exp
-    else:
-        raise Exception("untar not implemented for shell {}".format(shell))
-
     return exp
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -892,9 +848,9 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     }
     kwnames = list(COMPRESSION_MODE.values()) + ["lzma", "test", "clean"]
 
-    validate_args("zip", args, kwargs, ret, 2, 2, kwnames, False)
+    validate_args("zip", args, kwargs, ret, 2, None, kwnames, False)
 
-    src, dst = args
+    dst, src = args[0], args[1:]
     zip = '7z'
     
     #cmd = cmd + ' a -y {} {}\n'.format(quoted(dst), quoted(src))
@@ -908,10 +864,10 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
 
     test = []
     #if opts.zip_test:
-    if kwarg_value(kwargs, "test"):
+    if kwarg_value(kwargs, "t", "test"):
         test = ['if not exist', quoted(dst)]
 
-    cmd = test + [zip, 'a'] + flags + [quoted(dst), quoted(src)]
+    cmd = test + [zip, 'a'] + flags + [quoted(dst)] + [quoted(e) for e in src]
 
     return " ".join(cmd) + "\n"
 
@@ -940,26 +896,12 @@ def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     arg = args[0]
     return "echo %DATE% %TIME% {} >> %~dp0log.txt\n".format(arg)
 
-def macro_clean_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
-    if ctx.shell == 'cmd':
-        return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
-    elif ctx.shell == 'msys2':
-        return "rm -rf {}\n".format(quoted(arg))
-    else:
-        raise Exception("rmdir not implemented for shell {}".format(ctx.shell))
-    
-def macro_github_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    if ctx.github:
-        arg = args[0]
-        return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
-    return '\n'
-
-def macro_rmdir(*args):
-    return macro_clean_dir(*args)
-
-def macro_rm(*args):
-    return macro_clean_dir(*args)
+    github = kwarg_value(kwargs, "github")
+    if not ctx.github and github:
+        return '\n'
+    return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
 
 def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
@@ -1046,18 +988,21 @@ def macro_set_var(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
         raise Exception("set_var not implemented for shell {}".format(ctx.shell))
     return "".join(res)
 
-def macro_copy_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("copy_file", args, kwargs, ret, 2, 2, set(), False)
+def macro_copy(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("copy", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "copy /y {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_move_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("move_file", args, kwargs, ret, 2, 2, set(), False)
+def macro_move(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("move", args, kwargs, ret, 2, 2, set(), False)
     src, dst = args
     return "move /y {} {}\n".format(quoted(src), quoted(dst))
 
-def macro_copy_dir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("copy_dir", args, kwargs, ret, 2, 2, ['q'], False)
+def macro_del(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    return "del /f /q " + " ".join([quoted(arg) for arg in args])
+
+def macro_xcopy(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("xcopy", args, kwargs, ret, 2, 2, ['q'], False)
     src, dst = args
     keys = ['s','e','y','i']
     q = kwargs.get('q')
@@ -1335,7 +1280,7 @@ def maybe_macro(line):
         return False
     if ')' not in line:
         return False
-    for n in MACRO_NAMES:
+    for n in MACRO_NAMES + DEPRECATED_MACRO_NAMES:
         if n in line:
             return True
     return False
@@ -1386,13 +1331,13 @@ def expand_macros(defs, thens, shells, opts: Opts, github: bool = False, githubd
             if maybe_macro(line):
                 try:
                     ret, macroname, args, kwargs = parse_macro(line)
+
+                    if macroname in DEPRECATED_MACRO_NAMES:
+                        print("{} is deprecated".format(macroname))
+                        continue
+
                     ctx = Ctx(github, shell)
-                    if macroname.split("_")[0] == 'github':
-                        exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
-                    elif macroname in ['download', 'unzip']:
-                        exp, clean_exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
-                    else:
-                        exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
+                    exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
                     defs[name][i] = reindent(exp, line)
                     continue
                 except ParseMacroError as e:
