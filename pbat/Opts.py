@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 ON_PUSH = 1
 
@@ -29,6 +29,16 @@ class Opts:
     use_diff: bool = True
     env_path: list[str] = field(default_factory=list)
     clear_path: bool = False
+    use_patch: bool = False
     #main_def: str = None
     #order: list[str] = field(default_factory=list)
     #top: list[str] = field(default_factory=list)
+
+def copy_opts(opts: Opts) -> Opts:
+    res = Opts()
+    for field in fields(opts):
+        value = getattr(opts, field.name)
+        if isinstance(value, list):
+            value = list(value)
+        setattr(res, field.name, value)
+    return res

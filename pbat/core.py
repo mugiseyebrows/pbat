@@ -13,13 +13,13 @@ import hashlib
 try:
     from .parsemacro import parse_macro, ParseMacroError
     from .parsedef import parse_def
-    from .Opts import Opts
-    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES
+    from .Opts import Opts, copy_opts
+    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 except ImportError:
     from parsemacro import parse_macro, ParseMacroError
     from parsedef import parse_def
-    from Opts import Opts
-    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES
+    from Opts import Opts, copy_opts
+    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 
 WARNING = 'This file is generated from {}, all edits will be lost'
 
@@ -301,7 +301,62 @@ def uniq(vs):
             res.append(v)
     return res
 
-def render_one(name, defs, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
+def find_cache_steps(script: Script, keys: list[str], opts: Opts) -> list[GithubCacheStep]:
+    cache = []
+    for name in keys:
+        github_data = GithubData()
+        function = script.function(name)
+        lines = expand_macros(name, function._body, opts, True, github_data)
+        cache.extend(github_data.cache)
+    return cache
+
+def find_setup_java_steps(script: Script, keys: list[str], opts: Opts) -> GithubSetupJava | None:
+    for name in keys:
+        github_data = GithubData()
+        function = script.function(name)
+        lines = expand_macros(name, function._body, opts, True, github_data)
+        if github_data.setup_java:
+            return github_data.setup_java
+
+def render_one(function: Function, opts: Opts, github_data: GithubData):
+    res = []
+    opts = copy_opts(opts)
+    github = True
+    name = function._name
+    lines = expand_macros(name, function._body, opts, github, github_data)
+    head = []
+    if len(opts.env_path) > 0:
+        if opts.clear_path:
+            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+        else:
+            pat = 'set PATH={};%PATH%'
+        head += [pat.format(";".join(uniq(opts.env_path))) + '\n']
+
+    if opts.use_patch:
+        head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)'], opts, github, github_data)
+
+    lines = head + lines
+
+    res.append(":{}_begin\n".format(name))
+    if opts.debug:
+        res.append("echo {}\n".format(name))
+    res.append("".join(lines))
+    res.append(":{}_end\n".format(name))
+    """
+    if then:
+        res.append("goto {}\n".format(then + "_begin"))
+    else:
+        res.append("goto end")
+    """
+    res.append("\n")
+    while(True):
+        ok1 = remove_unused_labels(res)
+        ok2 = remove_redundant_gotos(res)
+        if not ok1 and not ok2:
+            break
+    return "".join(res)
+
+def render_one_(name, defs, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
 
     #print("render one", name, opts.env_path)
     #print("render_one")
@@ -385,7 +440,20 @@ def insert_after(a, b, keys):
     return True
 
 
-def update_chain(deps, chain, tested):
+def update_chain(script, chain, tested):
+    name = next(filter(lambda n: n not in tested, chain), None)
+    if name is None:
+        return False
+    tested.add(name)
+    def get_deps(name):
+        return script.function(name)._deps
+    ins = [n for n in get_deps(name) if n not in chain]
+    ix = chain.index(name)
+    for i, n in enumerate(ins):
+        chain.insert(ix + i, n)
+    return True
+
+def update_chain_(deps, chain, tested):
     name = next(filter(lambda n: n not in tested, chain), None)
     if name is None:
         return False
@@ -400,7 +468,34 @@ def update_chain(deps, chain, tested):
         chain.insert(ix + i, n)
     return True
 
-def compute_order(defs, deps, thens, order):
+def compute_order(script: Script):
+    thens_ = dict()
+    if script._order is None:
+        main = script._function._name
+        chain = [main]
+        tested = set()
+        while update_chain(script, chain, tested):
+            pass
+        for a, b in zip(chain, chain[1:]):
+            thens_[a] = b
+        keys = chain
+    else:
+        raise ValueError("not implemented")
+    for i in range(1000):
+        changed = False
+        for a, b in thens_.items():
+            if a in keys:
+                if b not in keys:
+                    keys.append(b)
+                    changed = True
+        if not changed:
+            break
+    for n in script._functions.keys():
+        if n not in keys:
+            print("warning: not reachable {}".format(n))
+    return keys, thens_
+
+def compute_order_(defs, deps, thens, order):
     thens_ = dict(thens)
     if order is None:
         main = list(defs.keys())[-1]
@@ -695,11 +790,16 @@ exit /b
 )""".format(ret)
 
     env_name = ret
-    items = args[0]
+
+    if isinstance(args[0], list):
+        items = args[0]
+    else:
+        items = args
+
     if len(args) > 1:
         raise ValueError("find_app requires one positional argument")
-        
-    tests = ["if exist \"{}\" set {}={}\n".format(item, env_name, item) for i,item in enumerate(reversed(items))]
+    
+    tests = ["if exist \"{}\" set {}={}\n".format(item, env_name, item) for i, item in enumerate(reversed(items))]
     tests = tests + ['if not defined {} {}\n'.format(env_name, error)]
     return "".join(tests)
 
@@ -794,7 +894,8 @@ def kwarg_value(kwargs, *names):
 
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    if ctx.shell == 'cmd':
+    if not ctx.github:
+        print("not ctx.github")
         opts.env_path.append('C:\\Program Files\\7-Zip')
 
     src = args[0]
@@ -872,7 +973,10 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     return " ".join(cmd) + "\n"
 
 def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p1"})
+    validate_args("patch", args, kwargs, ret, 1, None, {"N", "forward", "p1"})
+
+    opts.use_patch = True
+
     if opts.patch_in_path:
         patch = "patch"
     else:
@@ -1309,7 +1413,25 @@ def reindent(expr, orig):
     #print(expr, lines)
     return "\n".join(lines) + "\n"
 
-def expand_macros(defs, thens, shells, opts: Opts, github: bool = False, githubdata: GithubData = None):
+def expand_macros(name, lines, opts: Opts, github: bool = False, githubdata: GithubData = None):
+    res = list(lines)
+    shell = 'cmd'
+    for i, line in enumerate(lines):
+        if maybe_macro(line):
+            try:
+                ret, macroname, args, kwargs = parse_macro(line)
+                if macroname in DEPRECATED_MACRO_NAMES:
+                    print("{} is deprecated".format(macroname))
+                    continue
+                ctx = Ctx(github, shell)
+                exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
+                res[i] = reindent(exp, line)
+                continue
+            except ParseMacroError as e:
+                pass
+    return res
+
+def expand_macros_(defs, thens, shells, opts: Opts, github: bool = False, githubdata: GithubData = None):
 
     """
     if 'clean' not in defs:
@@ -1432,6 +1554,72 @@ def github_check_cd(text):
         raise Exception("{} does not work on github actions use %CD%".format(problem))
 
 def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
+
+    if isinstance(src, str):
+        src_name = os.path.basename(src)
+    else:
+        src_name = 'untitled'
+
+    dst_paths = []
+    for github in [False, True]:
+        script = parse_script(src, github)
+        if github:
+            steps1 = []
+            steps2 = []
+            steps3 = []
+            opts = script._opts
+            githubdata = GithubData()
+
+            keys, thens_ = compute_order(script)
+
+            for name in keys:
+                function = script.function(name)
+                text = filter_empty_lines(render_one(function, opts, githubdata))
+                text = dedent(text)
+                github_check_cd(text)
+                if text == '':
+                    continue
+                shell = 'cmd'
+                condition = None
+                step = GithubShellStep(text, shell, name, condition)
+                steps2.append(make_github_step(step, opts, githubdata))
+
+            # pre steps
+
+            if githubdata.checkout:
+                steps1.append(make_checkout_step())
+
+            if githubdata.setup_msys2:
+                steps1.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
+
+            if githubdata.setup_node:
+                steps1.append(make_setup_node_step(githubdata.setup_node))
+
+            if githubdata.setup_java:
+                steps1.append(make_setup_java_step(githubdata.setup_java))
+
+            for item in githubdata.cache:
+                steps1.append(make_cache_step(item))
+
+            # post steps
+
+            for item in githubdata.upload:
+                steps3.append(make_upload_step(item))
+
+            if len(githubdata.release) > 0:
+                steps3.append(make_release_step(githubdata.release))
+
+            steps = steps1 + steps2 + steps3
+
+            save_workflow(dst_workflow, steps, script._opts, githubdata)
+            dst_paths.append(dst_workflow)
+        else:
+            pass
+
+    if verbose and isinstance(src, str) and isinstance(dst_bat, str):
+        print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
+
+def read_compile_write_(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
 
     if isinstance(src, str):
         src_name = os.path.basename(src)

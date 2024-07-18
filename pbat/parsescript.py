@@ -56,8 +56,125 @@ def pat_spacejoin(*pat):
     SPACE = "\\s*"
     return SPACE.join(pat)
 
+
+
+def parse_statement(line, opts) -> bool:
+
+    m = re.match('^\\s*(debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
+    if m is not None:
+        optname = m.group(1).replace("-","_")
+        optval = m.group(2) in ['on','true','1']
+        setattr(opts, optname, optval)
+        return True
+
+    m = re.match('^\\s*([a-z0-9_]+[_-]in[_-]path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
+    if m:
+        optname = m.group(1).replace("-","_")
+        if hasattr(opts, optname):
+            setattr(opts, optname, m.group(2) in ['on','true','1'])
+            return True
+    
+    ID = "([0-9a-z_-]+)"
+    START = "^"
+    END = "\\s*$"
+
+    pat = pat_spacejoin(START, 'msys2[_-]msystem', ID)
+    m = re.match(pat, line, re.IGNORECASE)
+    if m:
+        opts.msys2_msystem = m.group(1).strip()
+        return True
+
+    pat = pat_spacejoin(START, 'github[_-]image', ID)
+    m = re.match(pat, line)
+    if m:
+        opts.github_image = m.group(1).strip()
+        return True
+    
+    pat = pat_spacejoin(START, 'github[_-]on', ID)
+    m = re.match(pat, line)
+    if m:
+        trigger = m.group(1).strip()
+        opts.github_on = {
+            "push": ON_PUSH,
+            "release": ON_RELEASE,
+            "tag": ON_TAG
+        }[trigger]
+        return True
+
+    m = re.match('^curl_user_agent\\s+(safari|chrome|mozilla)$', line)
+    if m is not None:
+        opts.curl_user_agent = m.group(1)
+        return True
+    
+    m = re.search('^curl_proxy\\s+(.*)$', line)
+    if m is not None:
+        opts.curl_proxy = m.group(1).rstrip()
+        return True
+    
+    return False
+
+def parse_order(line):
+    m = re.match('^\\s*order\\s+(.*)$', line)
+    if m:
+        return [n.strip() for n in re.split('\\s+', m.group(1)) if n.strip() != ""]
+
+class Function:
+    def __init__(self, name, then, deps, shell, condition):
+        self._name = name
+        self._then = then
+        self._deps = deps
+        self._shell = shell
+        self._condition = condition
+        self._body = []
+        self._macro_names = None
+        
+    def append(self, line):
+        self._body.append(line)
+
+class Script:
+
+    def __init__(self):
+        self._functions = dict()
+        #self._statements = []
+        self._opts = Opts()
+        self._function = None
+        self._order = None
+
+    def function(self, name):
+        return self._functions[name]
+
+    def append(self, i, line):
+        # todo redefinitions
+        if parse_statement(line, self._opts):
+            return
+        order = parse_order(line)
+        if order:
+            self._order = order
+            return
+        def_ = parse_def(line)
+        if def_ is not None:
+            name, then, deps_, shell, condition = def_
+            function = Function(name, then, deps_, shell, condition)
+            self._function = function
+            self._functions[name] = function
+            return
+        if self._function:
+            self._function.append(line)
+        else:
+            print("not used line: ", line)
+
+def parse_script(src, github) -> Script:
+    # todo includes
+    with open(src, encoding='utf-8') as f:
+        lines = list(f)
+    script = Script()
+    for i, line in enumerate(lines):
+        script.append(i, line)
+    script._opts.github = github
+    return script
+
 # defs, deps, thens, top, order, shells, opts, conditions
-def parse_script(src, github):
+def parse_script_(src, github):
     
     def_line = dict()
 
@@ -83,12 +200,9 @@ def parse_script(src, github):
         return "".join(args)
 
     def process_line(line, cwd):
-
         PBAT_FILE = "([0-9a-z_-]+[.]pbat)"
         START = "^"
-
         pat = pat_spacejoin(START, 'include', '\\(', PBAT_FILE, '\\)')
-
         m = re.match(pat, line, re.IGNORECASE)
         if m:
             path = os.path.join(cwd, m.group(1))
@@ -135,7 +249,6 @@ def parse_script(src, github):
         return " ".join(res) + "\n"
 
     used = set()
-    chksum_used = set()
 
     # unsplit
     for i, line in enumerate(lines):
@@ -163,16 +276,8 @@ def parse_script(src, github):
             line = unsplit_line(lines, i, skip)
             lines_.append(line)
             used.add(name)
-            """
-            if name == 'download':
-                m = re.search(':({})\\s*='.format("|".join(CHECKSUM_ALGS)), line)
-                if m:
-                    alg = m.group(1)
-                    chksum_used.add(alg)
-            """
         else:
             lines_.append(line)
-
 
     lines = lines_
     #print(lines)
@@ -190,61 +295,13 @@ def parse_script(src, github):
     name = None
     for i, line in enumerate(lines):
         #line = line.strip()
-        m = re.match('^\\s*(debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
-        if m is not None:
-            optname = m.group(1).replace("-","_")
-            optval = m.group(2) in ['on','true','1']
-            setattr(opts, optname, optval)
-            continue
-
-        m = re.match('^\\s*([a-z0-9_]+[_-]in[_-]path)\\s+(off|on|true|false|1|0)\\s*$', line, re.IGNORECASE)
-        if m:
-            optname = m.group(1).replace("-","_")
-            if hasattr(opts, optname):
-                setattr(opts, optname, m.group(2) in ['on','true','1'])
-                continue
         
-        ID = "([0-9a-z_-]+)"
-        START = "^"
-        END = "\\s*$"
-
-        pat = pat_spacejoin(START, 'msys2[_-]msystem', ID)
-        m = re.match(pat, line, re.IGNORECASE)
-        if m:
-            opts.msys2_msystem = m.group(1).strip()
-            continue
-
-        pat = pat_spacejoin(START, 'github[_-]image', ID)
-        m = re.match(pat, line)
-        if m:
-            opts.github_image = m.group(1).strip()
-            continue
-        
-        pat = pat_spacejoin(START, 'github[_-]on', ID)
-        m = re.match(pat, line)
-        if m:
-            trigger = m.group(1).strip()
-            opts.github_on = {
-                "push": ON_PUSH,
-                "release": ON_RELEASE,
-                "tag": ON_TAG
-            }[trigger]
-            continue
-
-        m = re.match('^curl_user_agent\\s+(safari|chrome|mozilla)$', line)
-        if m is not None:
-            opts.curl_user_agent = m.group(1)
-            continue
-        m = re.search('^curl_proxy\\s+(.*)$', line)
-        if m is not None:
-            opts.curl_proxy = m.group(1).rstrip()
-            continue
         
         ID = "([0-9a-z_]+)"
         IDS = "([0-9a-z_ ]*)"
         START = "^"
 
-        pat = pat_spacejoin(START, 'def\\s+', ID)
+        pat = '\\s*def\\s+([0-9a-z_]+)'
 
         m = re.match(pat, line, re.IGNORECASE)
         if m is not None:
@@ -325,7 +382,7 @@ def parse_script(src, github):
     """
 
     if 'patch' in used and not opts.patch_in_path:
-        top.extend(['PATCH = find_app([C:\\Program Files\\Git\\usr\\bin\\patch.exe])\n'])
+        top.extend(['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'])
     
     """
     if 'untar' in used and not opts.tar_in_path:

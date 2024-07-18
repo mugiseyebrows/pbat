@@ -1,6 +1,7 @@
 import os
 from lark import Lark, Tree, Token
 import unittest
+import re
 
 base = os.path.dirname(__file__)
 path = os.path.join(base, "def.lark")
@@ -12,12 +13,18 @@ parser = Lark(GRAMMAR)
 def find_data(tree, data, trace = False):
     return [child for child in tree.children if hasattr(child, 'data') and child.data == data]
 
-def parse_def(def_):
+def parse_def(line):
+
+    pat = '\\s*def\\s+([0-9a-z_]+)'
+    m = re.match(pat, line, re.IGNORECASE)
+    if m is None:
+        return None
+
     name = None
     then = None
     depends = []
     shell = None
-    tree = parser.parse(def_)
+    tree = parser.parse(line)
 
     for item in find_data(tree, 'defname'):
         name = item.children[0].value
@@ -34,7 +41,7 @@ def parse_def(def_):
         for cond in find_data(item, "cond"):
             pos1 = cond.children[0].start_pos
             pos2 = cond.children[-1].end_pos
-            condition = def_[pos1:pos2]
+            condition = line[pos1:pos2]
     return name, then, depends, shell, condition
 
 class TestParse(unittest.TestCase):
