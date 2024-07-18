@@ -824,7 +824,7 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    if ctx.shell == 'cmd':
+    if not ctx.github:
         opts.env_path.append('C:\\Program Files\\7-Zip')
 
     COMPRESSION_MODE = {
@@ -885,7 +885,7 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     
 def macro_mkdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
-    return "if not exist \"{}\" mkdir \"{}\"\n".format(arg, arg)
+    return "if not exist {} mkdir {}\n".format(quoted(arg), quoted(arg))
 
 def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
@@ -896,7 +896,7 @@ def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     github = kwarg_value(kwargs, "github")
     if not ctx.github and github:
         return '\n'
-    return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
+    return "if exist {} rmdir /s /q {}\n".format(quoted(arg), quoted(arg))
 
 def macro_test_exist(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     path = args[0]
@@ -1456,145 +1456,67 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
         src_name = 'untitled'
 
     dst_paths = []
-    for github in [False, True]:
-        script = parse_script(src, github)
-        if github:
-            steps1 = []
-            steps2 = []
-            steps3 = []
-            opts = script._opts
-            githubdata = GithubData()
 
-            keys, thens_ = script.compute_order()
+    # local
+    script = parse_script(src, github=False)
+    opts = script._opts
+    text, files = render_local_main(script, opts, src_name, echo_off, warning)
+    text = dedent(text)
+    write(dst_bat, text)
+    dst_paths.append(dst_bat)
 
-            for name in keys:
-                function = script.function(name)
-                text = filter_empty_lines(render_function(function, opts, githubdata))
-                text = dedent(text)
-                github_check_cd(text)
-                if text == '':
-                    continue
-                shell = 'cmd'
-                condition = None
-                step = GithubShellStep(text, shell, name, condition)
-                steps2.append(make_github_step(step, opts, githubdata))
-
-            # pre steps
-
-            if githubdata.checkout:
-                steps1.append(make_checkout_step())
-
-            if githubdata.setup_msys2:
-                steps1.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
-
-            if githubdata.setup_node:
-                steps1.append(make_setup_node_step(githubdata.setup_node))
-
-            if githubdata.setup_java:
-                steps1.append(make_setup_java_step(githubdata.setup_java))
-
-            for item in githubdata.cache:
-                steps1.append(make_cache_step(item))
-
-            # post steps
-
-            for item in githubdata.upload:
-                steps3.append(make_upload_step(item))
-
-            if len(githubdata.release) > 0:
-                steps3.append(make_release_step(githubdata.release))
-
-            steps = steps1 + steps2 + steps3
-
-            save_workflow(dst_workflow, steps, script._opts, githubdata)
-            dst_paths.append(dst_workflow)
-        else:
-            opts = script._opts
-            text, files = render_local_main(script, opts, src_name, echo_off, warning)
-
-            text = dedent(text)
-
-            write(dst_bat, text)
-            dst_paths.append(dst_bat)
-
-    if verbose and isinstance(src, str) and isinstance(dst_bat, str):
-        print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
-
-def read_compile_write_(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
-
-    if isinstance(src, str):
-        src_name = os.path.basename(src)
-    else:
-        src_name = 'untitled'
-
-    dst_paths = []
-
-    for github in [False, True]:
+    if opts.github_workflow:
+        script = parse_script(src, github=True)
+        opts = script._opts
+        steps1 = []
+        steps2 = []
+        steps3 = []
+        opts = script._opts
         githubdata = GithubData()
-        
-        defs, deps, thens, top, order, shells, opts, conditions = parse_script(src, github)
+        keys, thens_ = script.compute_order()
+        for name in keys:
+            function = script.function(name)
+            text = filter_empty_lines(render_function(function, opts, githubdata))
+            text = dedent(text)
+            github_check_cd(text)
+            if text == '':
+                continue
+            shell = 'cmd'
+            condition = None
+            step = GithubShellStep(text, shell, name, condition)
+            steps2.append(make_github_step(step, opts, githubdata))
 
-        if github and not opts.github_workflow:
-            continue
+        # pre steps
+        if githubdata.checkout:
+            steps1.append(make_checkout_step())
 
-        if github:
-            os.makedirs(os.path.dirname(dst_workflow), exist_ok=True)
+        if githubdata.setup_msys2:
+            steps1.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
 
-        expand_macros(defs, thens, shells, opts, github, githubdata)
+        if githubdata.setup_node:
+            steps1.append(make_setup_node_step(githubdata.setup_node))
 
-        if github:
-            
-            steps = []
-            if githubdata.checkout:
-                steps.append(make_checkout_step())
+        if githubdata.setup_java:
+            steps1.append(make_setup_java_step(githubdata.setup_java))
 
-            if githubdata.setup_msys2:
-                steps.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
+        for item in githubdata.cache:
+            steps1.append(make_cache_step(item))
 
-            if githubdata.setup_node:
-                steps.append(make_setup_node_step(githubdata.setup_node))
+        # post steps
 
-            if githubdata.setup_java:
-                steps.append(make_setup_java_step(githubdata.setup_java))
+        for item in githubdata.upload:
+            steps3.append(make_upload_step(item))
 
-            #if githubdata.cache:
-            for item in githubdata.cache:
-                steps.append(make_cache_step(item))
+        if len(githubdata.release) > 0:
+            steps3.append(make_release_step(githubdata.release))
 
-            keys, thens_ = compute_order(defs, deps, thens, order)
+        steps = steps1 + steps2 + steps3
 
-            for name in keys:
-                text = filter_empty_lines(render_function(name, defs, thens, shells, top, order, opts, src_name, echo_off = False, warning = False))
-                text = dedent(text)
-                github_check_cd(text)
-                if text == '':
-                    continue
-                step = GithubShellStep(text, shells[name], name, conditions.get(name))
-                steps.append(make_github_step(step, opts, githubdata))
+        save_workflow(dst_workflow, steps, script._opts, githubdata)
+        dst_paths.append(dst_workflow)
 
-            for item in githubdata.upload:
-                steps.append(make_upload_step(item))
-
-            if len(githubdata.release) > 0:
-                steps.append(make_release_step(githubdata.release))
-
-            save_workflow(dst_workflow, steps, opts, githubdata)
-            dst_paths.append(dst_workflow)
-        else:
-
-            text, files = render_local_main(defs, deps, thens, shells, top, order, opts, src_name, echo_off, warning)
-
-            for file_name, file_content in files:
-                dst_path = os.path.join(os.path.dirname(src), file_name)
-                file_content = dedent(insert_matrix_values(file_content, githubdata.matrix))
-                write(dst_path, file_content)
-                dst_paths.append(dst_path)
-
-            text = dedent(insert_matrix_values(text, githubdata.matrix))
-
-            write(dst_bat, text)
-            dst_paths.append(dst_bat)
 
     if verbose and isinstance(src, str) and isinstance(dst_bat, str):
         print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
+
 
