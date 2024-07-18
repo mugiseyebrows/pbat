@@ -24,7 +24,8 @@ MACRO_NAMES = [
     'substr', 
     'use_tool', 'install_tool', 'call_vcvars',
     'use', 'install', 'add_path',
-    'if_exist_return', 'clear_path'
+    'if_exist_return', 'clear_path',
+    'test_exist'
 ]
 
 DEPRECATED_MACRO_NAMES = [

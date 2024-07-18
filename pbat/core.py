@@ -76,7 +76,7 @@ class GithubMatrix:
 class GithubData:
     checkout: bool = False
     release: list = field(default_factory=list)
-    upload: GithubUpload = None
+    upload: list[GithubUpload] = field(default_factory=list)
     matrix: GithubMatrix = field(default_factory=GithubMatrix)
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
@@ -116,7 +116,7 @@ def str_or_literal(items):
 def make_release_step(artifacts):
     return {
         "name": "release",
-        "uses": "softprops/action-gh-release@v1",
+        "uses": "softprops/action-gh-release@v2",
         "if": "startsWith(github.ref, 'refs/tags/')",
         "with": {
             "files": str_or_literal(artifacts)
@@ -522,7 +522,7 @@ def render_local_main(defs, deps, thens, shells, top, order, opts: Opts, src_nam
         res.append(":{}_begin\n".format(name))
         if opts.debug:
             res.append("echo {}\n".format(name))
-            res.append(macro_log(name, [name]))
+            #res.append(macro_log(name, [name]))
         shell = shells[name]
         if shell == 'cmd':
             res.append("".join(lines))
@@ -903,6 +903,12 @@ def macro_rmdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
         return '\n'
     return "rmdir /s /q {} || echo 1 > NUL\n".format(quoted(arg))
 
+def macro_test_exist(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    path = args[0]
+    return "if exist {} (\necho {} exist\n) else (\necho {} does not exist\n)\n".format(
+        quoted(path), path, path
+    )
+
 def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
     return "del /q \"{}\"\n".format(arg)
@@ -994,9 +1000,16 @@ def macro_copy(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Github
     return "copy /y {} {}\n".format(quoted(src), quoted(dst))
 
 def macro_move(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("move", args, kwargs, ret, 2, 2, set(), False)
+    validate_args("move", args, kwargs, ret, 2, 2, ["github", "g", "i", "ignore-errors"], False)
+    github = kwarg_value(kwargs, "github", "g")
+    ignore_errors = kwarg_value(kwargs, "ignore-errors", "i")
     src, dst = args
-    return "move /y {} {}\n".format(quoted(src), quoted(dst))
+    if not ctx.github and github:
+        return '\n'
+    res = ["move /y {} {}".format(quoted(src), quoted(dst))]
+    if ignore_errors:
+        res.append("echo 1 > NUL")
+    return " || ".join(res) + "\n"
 
 def macro_del(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     return "del /f /q " + " ".join([quoted(arg) for arg in args])
@@ -1042,7 +1055,7 @@ def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gith
     return 'if "%1" equ "{}" goto {}_begin\n'.format(value, defname)
 
 def macro_github_release(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    githubdata.release = args
+    githubdata.release.extend(args)
     return '\n'
 
 def macro_github_checkout(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1060,7 +1073,7 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
     if upload_name is None:
         upload_name = os.path.splitext(os.path.basename(path[0]))[0]
         upload_name = upload_name.replace('*', '')
-    githubdata.upload = GithubUpload(upload_name, path)
+    githubdata.upload.append(GithubUpload(upload_name, path))
     return '\n'
 
 def macro_github_cache(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1239,11 +1252,11 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
         opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
     elif app == 'mingw':
-        if ver in ['5', '5.4.0']:
+        if ver in ['5', '5.4.0', '540_32']:
             opts.env_path.append('C:\\mingw540_32\\bin')
-        elif ver == '8':
+        elif ver in ['8', '8.1.0', '810_64']:
             opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
-        elif ver == '11':
+        elif ver in ['11', '11.2.0', '1120_64']:
             opts.env_path.append('C:\\mingw1120_64\\bin')
         else:
             raise ValueError("use not implemented for {} {}".format(app, ver))
@@ -1470,8 +1483,8 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
                 step = GithubShellStep(text, shells[name], name, conditions.get(name))
                 steps.append(make_github_step(step, opts, githubdata))
 
-            if githubdata.upload:
-                steps.append(make_upload_step(githubdata.upload))
+            for item in githubdata.upload:
+                steps.append(make_upload_step(item))
 
             if len(githubdata.release) > 0:
                 steps.append(make_release_step(githubdata.release))
