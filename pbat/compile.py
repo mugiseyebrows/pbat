@@ -25,7 +25,8 @@ def main():
     for path in args.path:
         if glob.has_magic(path):
             for path_ in glob.glob(path):
-                paths.append(path_)
+                if os.path.splitext(path_)[1] == '.pbat':
+                    paths.append(path_)
         else:
             if os.path.isdir(path):
                 paths += find_pbats(path)

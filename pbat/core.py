@@ -309,89 +309,24 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
     name = function._name
     lines = expand_macros(name, function._body, opts, github, github_data)
     head = []
-    if len(opts.env_path) > 0:
+    if len(opts.env_path) > 0 or opts.clear_path:
         if opts.clear_path:
-            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+            env_path = opts.env_path + ['C:\Windows', 'C:\Windows\System32']
+            pat = 'set PATH={}'
         else:
+            env_path = opts.env_path
             pat = 'set PATH={};%PATH%'
-        head += [pat.format(";".join(uniq(opts.env_path))) + '\n']
-
-    """
-    if opts.use_patch:
-        head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)'], opts, github, github_data)
-    """
-
+        head += [pat.format(";".join(uniq(env_path))) + '\n']
     lines = head + lines
-
     res.append(":{}_begin\n".format(name))
     res.append("".join(lines))
     res.append(":{}_end\n".format(name))
-    """
-    if then:
-        res.append("goto {}\n".format(then + "_begin"))
-    else:
-        res.append("goto end")
-    """
     res.append("\n")
     while(True):
         ok1 = remove_unused_labels(res)
         ok2 = remove_redundant_gotos(res)
         if not ok1 and not ok2:
             break
-    return "".join(res)
-
-def render_one_(name, defs, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
-
-    #print("render one", name, opts.env_path)
-    #print("render_one")
-
-    res = []
-    if not opts.debug and echo_off:
-        res = res + ['@echo off\n']
-
-    if warning:
-        res += ['rem {}\n'.format(WARNING.format(src_name))]
-
-    if len(opts.env_path) > 0 and shells[name] == 'cmd':
-        if opts.clear_path:
-            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
-        else:
-            pat = 'set PATH={};%PATH%'
-        res += [pat.format(";".join(uniq(opts.env_path))) + '\n']
-
-    defs_ = {"top": top}
-    thens_ = dict()
-    shells_ = {"top": 'cmd'}
-    expand_macros(defs_, thens_, shells_, opts)
-    #print(defs_['top'])
-    res.extend(defs_['top'])
-
-    """
-    if 'main' not in defs:
-        print("main not defined")
-        return ""
-    """
-
-    keys = [ name ]
-
-    for name in keys:
-        lines = defs[name]
-        #res.append("rem def {}\n".format(name))
-        res.append(":{}_begin\n".format(name))
-        if opts.debug:
-            res.append("echo {}\n".format(name))
-            res.append(macro_log(name, [name]))
-        res.append("".join(lines))
-        res.append(":{}_end\n".format(name))
-        res.append("goto {}\n".format(thens[name] + "_begin" if name in thens and thens[name] not in ["end","exit"] else "end"))
-        res.append("\n")
-
-    while(True):
-        ok1 = remove_unused_labels(res)
-        ok2 = remove_redundant_gotos(res)
-        if not ok1 and not ok2:
-            break
-
     return "".join(res)
 
 def dedent(text):
@@ -442,73 +377,8 @@ def update_chain_(deps, chain, tested):
     return True
 
 
-def compute_order_(defs, deps, thens, order):
-    thens_ = dict(thens)
-    if order is None:
-        main = list(defs.keys())[-1]
-        chain = [main]
-        tested = set()
-        #print("chain", chain)
-        while update_chain(deps, chain, tested):
-            #print("chain", chain)
-            pass
-        # todo insert thens
-
-        #print("thens", thens)
-        if len(thens) > 0:
-            raise ValueError("not implemented")
-
-        for a, b in zip(chain, chain[1:]):
-            thens_[a] = b
-
-        """
-        for k, vs in deps.items():
-            if main in vs:
-                main = vs[0]
-            o = vs + [k]
-            for a, b in zip(o, o[1:]):
-                if a in thens_:
-                    print("warning: order {} -> {} changed to order {} -> {}".format(a, thens_[a], a, b))
-                thens_[a] = b
-        """
-        keys = chain
-    else:
-        keys = order
-        for k, vs in deps.items():
-            #print("k, vs", k, vs)
-            for v in reversed(vs):
-                if v not in keys:
-                    if k in keys:
-                        insert_before(v, k, keys)
-                    else:
-                        print("warning: {} not in order".format(k))
-        for a, b in zip(keys, keys[1:]):
-            if a in thens_:
-                print("warning: order {} -> {} changed to order {} -> {}".format(a, thens_[a], a, b))
-            thens_[a] = b
-    
-    for i in range(1000):
-        changed = False
-        for a, b in thens_.items():
-            if a in keys:
-                if b not in keys:
-                    keys.append(b)
-                    changed = True
-        if not changed:
-            break
-
-    #print("defs.keys()",defs.keys())
-    #print("reachable", keys)
-    for n in deps.keys():
-        if n not in keys:
-            print("warning: not reachable {}".format(n))
-
-    return keys, thens_
-
 def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
-
-    
 
     keys, thens = script.compute_order()
     for name in keys:
@@ -544,17 +414,19 @@ def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warni
     if warning:
         head.append('rem This file is generated from {}, all edits will be lost\n'.format(src_name))
 
-    if len(opts.env_path) > 0:
+    if len(opts.env_path) > 0 or opts.clear_path:
         if opts.clear_path:
-            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+            env_path = opts.env_path + ['C:\Windows', 'C:\Windows\System32']
+            pat = 'set PATH={}'
         else:
+            env_path = opts.env_path
             pat = 'set PATH={};%PATH%'
-        head += [pat.format(";".join(uniq(opts.env_path))) + '\n']
+        head += [pat.format(";".join(uniq(env_path))) + '\n']
 
-    if opts.use_patch:
+    if opts.need_patch_var:
         head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'], opts)
     
-    if opts.use_curl:
+    if opts.need_curl_var:
         head += expand_macros(name, ['CURL = find_app(C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe)\n'], opts)
 
     files = []
@@ -830,6 +702,9 @@ def quoted(s):
 def escape_url(s):
     return quoted("".join(["^" + c if c == '%' else c for c in s]))
 
+def macro_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    return 'goto {}_end'.format(name)
+
 def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
     url = args[0]
@@ -843,12 +718,16 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     cache = kwarg_value(kwargs, 'cache', 'c')
 
-    if opts.curl_in_path or shell =='msys2' or ctx.github:
-        curl = "curl"
-    else:
+    if opts.env_policy and not ctx.github:
         curl = '"%CURL%"'
-        opts.use_curl = True
-
+        opts.need_curl_var = True
+    else:
+        curl = "curl"
+        if not ctx.github:
+            opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
+            opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
+            opts.env_path.append('C:\\Windows\\System32')
+    
     user_agent = ""
     if opts.curl_user_agent is not None:
         user_agent = '--user-agent "' + {
@@ -986,10 +865,13 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
     opts.use_patch = True
 
-    if opts.patch_in_path or ctx.github:
-        patch = "patch"
-    else:
+    if opts.env_policy and not ctx.github:
         patch = '"%PATCH%"'
+        opts.need_patch_var = True
+    else:
+        patch = "patch"
+        if not ctx.github:
+            opts.env_path.append('C:\\Program Files\\Git\\usr\\bin')
 
     cmd = [patch]
     if kwarg_value(kwargs, 'N', "forward"):
@@ -1361,10 +1243,11 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         if not ctx.github:
             opts.env_path.append('C:\\Program Files\\CMake\\bin')
     elif app == 'ninja':
-        opts.env_path.append('C:\\Program Files\\Meson')
-        # github
-        opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
-        opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
+        if ctx.github:
+            opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
+            opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
+        else:
+            opts.env_path.append('C:\\Program Files\\Meson')
     elif app == 'mingw':
         if ver in ['5', '5.4.0', '540_32']:
             opts.env_path.append('C:\\mingw540_32\\bin')

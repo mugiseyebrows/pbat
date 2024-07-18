@@ -25,7 +25,7 @@ MACRO_NAMES = [
     'use_tool', 'install_tool', 'call_vcvars',
     'use', 'install', 'add_path',
     'if_exist_return', 'clear_path',
-    'test_exist'
+    'test_exist', 'return'
 ]
 
 DEPRECATED_MACRO_NAMES = [
@@ -58,9 +58,9 @@ def pat_spacejoin(*pat):
 
 
 
-def parse_statement(line, opts) -> bool:
+def parse_statement(line, opts: Opts) -> bool:
 
-    m = re.match('^\\s*(debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
+    m = re.match('^\\s*(env[_-]policy|debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
     if m is not None:
         optname = m.group(1).replace("-","_")
         optval = m.group(2) in ['on','true','1']
@@ -158,6 +158,10 @@ class Script:
 
     def append(self, i, line):
         # todo redefinitions
+        if re.match('\\s*#', line):
+            print("# comments are deprecated, use :: or rem, line {}".format(i))
+            return
+
         if parse_statement(line, self._opts):
             return
         order = parse_order(line)
