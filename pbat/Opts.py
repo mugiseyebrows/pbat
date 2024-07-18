@@ -30,6 +30,7 @@ class Opts:
     env_path: list[str] = field(default_factory=list)
     clear_path: bool = False
     use_patch: bool = False
+    use_curl: bool = False
     #main_def: str = None
     #order: list[str] = field(default_factory=list)
     #top: list[str] = field(default_factory=list)

@@ -124,6 +124,7 @@ def make_release_step(artifacts):
     }
 
 def make_upload_step(data: GithubUpload):
+    
     return {
         "name": "upload",
         "uses": "actions/upload-artifact@v4",
@@ -301,24 +302,7 @@ def uniq(vs):
             res.append(v)
     return res
 
-def find_cache_steps(script: Script, keys: list[str], opts: Opts) -> list[GithubCacheStep]:
-    cache = []
-    for name in keys:
-        github_data = GithubData()
-        function = script.function(name)
-        lines = expand_macros(name, function._body, opts, True, github_data)
-        cache.extend(github_data.cache)
-    return cache
-
-def find_setup_java_steps(script: Script, keys: list[str], opts: Opts) -> GithubSetupJava | None:
-    for name in keys:
-        github_data = GithubData()
-        function = script.function(name)
-        lines = expand_macros(name, function._body, opts, True, github_data)
-        if github_data.setup_java:
-            return github_data.setup_java
-
-def render_one(function: Function, opts: Opts, github_data: GithubData):
+def render_function(function: Function, opts: Opts, github_data: GithubData):
     res = []
     opts = copy_opts(opts)
     github = True
@@ -332,14 +316,14 @@ def render_one(function: Function, opts: Opts, github_data: GithubData):
             pat = 'set PATH={};%PATH%'
         head += [pat.format(";".join(uniq(opts.env_path))) + '\n']
 
+    """
     if opts.use_patch:
         head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)'], opts, github, github_data)
+    """
 
     lines = head + lines
 
     res.append(":{}_begin\n".format(name))
-    if opts.debug:
-        res.append("echo {}\n".format(name))
     res.append("".join(lines))
     res.append(":{}_end\n".format(name))
     """
@@ -440,18 +424,7 @@ def insert_after(a, b, keys):
     return True
 
 
-def update_chain(script, chain, tested):
-    name = next(filter(lambda n: n not in tested, chain), None)
-    if name is None:
-        return False
-    tested.add(name)
-    def get_deps(name):
-        return script.function(name)._deps
-    ins = [n for n in get_deps(name) if n not in chain]
-    ix = chain.index(name)
-    for i, n in enumerate(ins):
-        chain.insert(ix + i, n)
-    return True
+
 
 def update_chain_(deps, chain, tested):
     name = next(filter(lambda n: n not in tested, chain), None)
@@ -468,32 +441,6 @@ def update_chain_(deps, chain, tested):
         chain.insert(ix + i, n)
     return True
 
-def compute_order(script: Script):
-    thens_ = dict()
-    if script._order is None:
-        main = script._function._name
-        chain = [main]
-        tested = set()
-        while update_chain(script, chain, tested):
-            pass
-        for a, b in zip(chain, chain[1:]):
-            thens_[a] = b
-        keys = chain
-    else:
-        raise ValueError("not implemented")
-    for i in range(1000):
-        changed = False
-        for a, b in thens_.items():
-            if a in keys:
-                if b not in keys:
-                    keys.append(b)
-                    changed = True
-        if not changed:
-            break
-    for n in script._functions.keys():
-        if n not in keys:
-            print("warning: not reachable {}".format(n))
-    return keys, thens_
 
 def compute_order_(defs, deps, thens, order):
     thens_ = dict(thens)
@@ -558,8 +505,73 @@ def compute_order_(defs, deps, thens, order):
 
     return keys, thens_
 
+def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warning=True):
+    res = []
 
-def render_local_main(defs, deps, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
+    
+
+    keys, thens = script.compute_order()
+    for name in keys:
+        function = script.function(name)
+        lines = expand_macros(name, function._body, opts, False)
+        #res.append("rem def {}\n".format(name))
+        res.append(":{}_begin\n".format(name))
+        if opts.debug:
+            res.append("echo {}\n".format(name))
+            #res.append(macro_log(name, [name]))
+        shell = function._shell
+        if shell is None:
+            shell = 'cmd'
+        if shell == 'cmd':
+            res.append("".join(lines))
+        else:
+            raise Exception('not implemented')
+        res.append(":{}_end\n".format(name))
+        goto = None
+        if name in thens:
+            if thens[name] != 'exit':
+                goto = "goto {}_begin\n".format(thens[name])
+        if goto is None:
+            goto = "exit /b\n"
+        res.append(goto)
+        res.append("\n")
+
+    head = []
+
+    if not opts.debug and echo_off:
+        head.append('@echo off\n')
+
+    if warning:
+        head.append('rem This file is generated from {}, all edits will be lost\n'.format(src_name))
+
+    if len(opts.env_path) > 0:
+        if opts.clear_path:
+            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
+        else:
+            pat = 'set PATH={};%PATH%'
+        head += [pat.format(";".join(uniq(opts.env_path))) + '\n']
+
+    if opts.use_patch:
+        head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'], opts)
+    
+    if opts.use_curl:
+        head += expand_macros(name, ['CURL = find_app(C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe)\n'], opts)
+
+    files = []
+
+    res = head + res
+
+    while(True):
+        ok1 = remove_unused_labels(res)
+        ok2 = remove_redundant_gotos(res)
+        if not ok1 and not ok2:
+            break
+
+    return "".join(res), files
+
+
+
+def render_local_main_(defs, deps, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
 
     #print("render_local_main")
 
@@ -774,7 +786,7 @@ def validate_args(fnname, args, kwargs, ret, argmin = None, argmax = None, kwnam
 
 def macro_find_app(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     
-    validate_args("find_app", args, kwargs, ret, 1, 1, {"g", "goto", "c", "cmd"}, True)
+    validate_args("find_app", args, kwargs, ret, 1, None, {"g", "goto", "c", "cmd"}, True)
 
     err_goto = kwarg_value(kwargs, 'goto', 'g')
     err_cmd = kwarg_value(kwargs, 'cmd', 'c')
@@ -796,9 +808,6 @@ exit /b
     else:
         items = args
 
-    if len(args) > 1:
-        raise ValueError("find_app requires one positional argument")
-    
     tests = ["if exist \"{}\" set {}={}\n".format(item, env_name, item) for i, item in enumerate(reversed(items))]
     tests = tests + ['if not defined {} {}\n'.format(env_name, error)]
     return "".join(tests)
@@ -838,6 +847,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         curl = "curl"
     else:
         curl = '"%CURL%"'
+        opts.use_curl = True
 
     user_agent = ""
     if opts.curl_user_agent is not None:
@@ -895,7 +905,6 @@ def kwarg_value(kwargs, *names):
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
     if not ctx.github:
-        print("not ctx.github")
         opts.env_path.append('C:\\Program Files\\7-Zip')
 
     src = args[0]
@@ -973,11 +982,11 @@ def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     return " ".join(cmd) + "\n"
 
 def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("patch", args, kwargs, ret, 1, None, {"N", "forward", "p1"})
+    validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p1"})
 
     opts.use_patch = True
 
-    if opts.patch_in_path:
+    if opts.patch_in_path or ctx.github:
         patch = "patch"
     else:
         patch = '"%PATCH%"'
@@ -1167,12 +1176,8 @@ def macro_github_checkout(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubd
     return '\n'
 
 def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("github_upload", args, kwargs, ret, 1, 1, {"n", "name"})
-    arg = args[0]
-    if isinstance(arg, list):
-        path = arg
-    else:
-        path = [arg]
+    validate_args("github_upload", args, kwargs, ret, 1, None, {"n", "name"})
+    path = args
     upload_name = kwarg_value(kwargs, "n", "name")
     if upload_name is None:
         upload_name = os.path.splitext(os.path.basename(path[0]))[0]
@@ -1320,10 +1325,14 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         raise ValueError("use requires at least one arg")
 
     if app in ['conda', 'miniconda']:
-        opts.env_path.append('C:\Miniconda3')
-        opts.env_path.append('C:\Miniconda3\\Scripts')
-        opts.env_path.append('%USERPROFILE%\\Miniconda3')
-        opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
+        if ctx.github:
+            opts.env_path.append('C:\Miniconda')
+            opts.env_path.append('C:\Miniconda\\Scripts')
+        else:
+            opts.env_path.append('C:\Miniconda3')
+            opts.env_path.append('C:\Miniconda3\\Scripts')
+            opts.env_path.append('%USERPROFILE%\\Miniconda3')
+            opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
     elif app == 'psql':
         if ver is None:
             ver = '14'
@@ -1349,7 +1358,8 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     elif app == 'perl':
         opts.env_path.append('C:\\Strawberry\\perl\\bin')
     elif app == 'cmake':
-        opts.env_path.append('C:\\Program Files\\CMake\\bin')
+        if not ctx.github:
+            opts.env_path.append('C:\\Program Files\\CMake\\bin')
     elif app == 'ninja':
         opts.env_path.append('C:\\Program Files\\Meson')
         # github
@@ -1416,6 +1426,8 @@ def reindent(expr, orig):
 def expand_macros(name, lines, opts: Opts, github: bool = False, githubdata: GithubData = None):
     res = list(lines)
     shell = 'cmd'
+    if githubdata is None:
+        githubdata = GithubData()
     for i, line in enumerate(lines):
         if maybe_macro(line):
             try:
@@ -1570,11 +1582,11 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             opts = script._opts
             githubdata = GithubData()
 
-            keys, thens_ = compute_order(script)
+            keys, thens_ = script.compute_order()
 
             for name in keys:
                 function = script.function(name)
-                text = filter_empty_lines(render_one(function, opts, githubdata))
+                text = filter_empty_lines(render_function(function, opts, githubdata))
                 text = dedent(text)
                 github_check_cd(text)
                 if text == '':
@@ -1614,7 +1626,13 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             save_workflow(dst_workflow, steps, script._opts, githubdata)
             dst_paths.append(dst_workflow)
         else:
-            pass
+            opts = script._opts
+            text, files = render_local_main(script, opts, src_name, echo_off, warning)
+
+            text = dedent(text)
+
+            write(dst_bat, text)
+            dst_paths.append(dst_bat)
 
     if verbose and isinstance(src, str) and isinstance(dst_bat, str):
         print("{} -> \n {}".format(src, "\n ".join(dst_paths)))
@@ -1663,7 +1681,7 @@ def read_compile_write_(src, dst_bat, dst_workflow, verbose=True, echo_off=True,
             keys, thens_ = compute_order(defs, deps, thens, order)
 
             for name in keys:
-                text = filter_empty_lines(render_one(name, defs, thens, shells, top, order, opts, src_name, echo_off = False, warning = False))
+                text = filter_empty_lines(render_function(name, defs, thens, shells, top, order, opts, src_name, echo_off = False, warning = False))
                 text = dedent(text)
                 github_check_cd(text)
                 if text == '':

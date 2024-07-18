@@ -118,6 +118,19 @@ def parse_order(line):
     if m:
         return [n.strip() for n in re.split('\\s+', m.group(1)) if n.strip() != ""]
 
+def update_chain(script, chain, tested):
+    name = next(filter(lambda n: n not in tested, chain), None)
+    if name is None:
+        return False
+    tested.add(name)
+    def get_deps(name):
+        return script.function(name)._deps
+    ins = [n for n in get_deps(name) if n not in chain]
+    ix = chain.index(name)
+    for i, n in enumerate(ins):
+        chain.insert(ix + i, n)
+    return True
+
 class Function:
     def __init__(self, name, then, deps, shell, condition):
         self._name = name
@@ -140,7 +153,7 @@ class Script:
         self._function = None
         self._order = None
 
-    def function(self, name):
+    def function(self, name) -> Function:
         return self._functions[name]
 
     def append(self, i, line):
@@ -161,7 +174,35 @@ class Script:
         if self._function:
             self._function.append(line)
         else:
-            print("not used line: ", line)
+            if line.strip() != '':
+                print("not used line: ", line)
+
+    def compute_order(self):
+        thens_ = dict()
+        if self._order is None:
+            main = self._function._name
+            chain = [main]
+            tested = set()
+            while update_chain(self, chain, tested):
+                pass
+            for a, b in zip(chain, chain[1:]):
+                thens_[a] = b
+            keys = chain
+        else:
+            raise ValueError("not implemented")
+        for i in range(1000):
+            changed = False
+            for a, b in thens_.items():
+                if a in keys:
+                    if b not in keys:
+                        keys.append(b)
+                        changed = True
+            if not changed:
+                break
+        for n in self._functions.keys():
+            if n not in keys:
+                print("warning: not reachable {}".format(n))
+        return keys, thens_
 
 def parse_script(src, github) -> Script:
     # todo includes
