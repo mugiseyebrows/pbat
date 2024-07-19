@@ -1021,16 +1021,12 @@ def macro_xcopy(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
 
 def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-
-    opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build')
-    opts.env_path.append('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build')
-
-    """
     if ctx.github:
-        return 'call "{}"\n'.format('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat')
+        opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build')
     else:
-        return 'call "{}"\n'.format('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat')
-    """
+        opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build')
+        opts.env_path.append('C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build')
+
     return 'call vcvars64.bat'
 
 def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -1181,16 +1177,16 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
             raise ValueError("install(mingw, {}) not implemented".format(ver))
 
     elif app in ['aqt', 'aqtinstall']:
-        return 'where aqt > NUL || pip install aqtinstall'
+        return 'where aqt 2> NUL || pip install aqtinstall'
 
     elif app == 'mugideploy':
-        return 'where mugideploy > NUL || pip install mugideploy'
+        return 'where mugideploy 2> NUL || pip install mugideploy'
 
     elif app == 'mugicli':
-        return 'where pyfind > NUL || pip install mugicli'
+        return 'where pyfind 2> NUL || pip install mugicli'
 
     elif app == 'mugisync':
-        return 'where mugisync > NUL || pip install mugisync'
+        return 'where mugisync 2> NUL || pip install mugisync'
     
     raise ValueError("install({}) not implemented".format(app))
 
