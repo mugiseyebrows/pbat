@@ -9,24 +9,16 @@ import hashlib
 
 # todo shell python bash pwsh
 
-
 try:
     from .parsemacro import parse_macro, ParseMacroError
-    from .parsedef import parse_def
     from .Opts import Opts, copy_opts
     from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 except ImportError:
     from parsemacro import parse_macro, ParseMacroError
-    from parsedef import parse_def
     from Opts import Opts, copy_opts
     from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 
 WARNING = 'This file is generated from {}, all edits will be lost'
-
-
-CHECKSUM_ALGS = ['b2','md5','sha1','sha224','sha256','sha384','sha512']
-
-
 
 @dataclass
 class GithubUpload:
@@ -266,26 +258,6 @@ def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
 
     return obj
 
-
-
-
-
-
-
-def insert_deps(names, deps):
-    res = []
-    for n in names:
-        if n in deps:
-            n_deps = deps[n]
-            for d in n_deps:
-                if d not in res:
-                    res.append(d)
-        res.append(n)
-    #print('deps', deps)
-    #print('before insert:', names)
-    #print('after insert:', res)
-    return res
-
 def find_app(name, items, label):
     label_success = "{}_find_app_found".format(name)
     tests = ["if exist \"{}\" goto {}\n".format(item, label_success) for item in items]
@@ -302,13 +274,7 @@ def uniq(vs):
             res.append(v)
     return res
 
-def render_function(function: Function, opts: Opts, github_data: GithubData):
-    res = []
-    opts = copy_opts(opts)
-    github = True
-    name = function._name
-    lines = expand_macros(name, function._body, opts, github, github_data)
-    head = []
+def append_path_var(opts: Opts, head: list[str]):
     if len(opts.env_path) > 0 or opts.clear_path:
         if opts.clear_path:
             env_path = opts.env_path + ['C:\Windows', 'C:\Windows\System32']
@@ -316,7 +282,16 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
         else:
             env_path = opts.env_path
             pat = 'set PATH={};%PATH%'
-        head += [pat.format(";".join(uniq(env_path))) + '\n']
+        head.append(pat.format(";".join(uniq(env_path))) + '\n')
+
+def render_function(function: Function, opts: Opts, github_data: GithubData):
+    res = []
+    opts = copy_opts(opts)
+    github = True
+    name = function._name
+    lines = expand_macros(name, function._body, opts, github, github_data)
+    head = []
+    append_path_var(opts, head)
     lines = head + lines
     res.append(":{}_begin\n".format(name))
     res.append("".join(lines))
@@ -358,25 +333,6 @@ def insert_after(a, b, keys):
     keys.insert(keys.index(b) + 1, a)
     return True
 
-
-
-
-def update_chain_(deps, chain, tested):
-    name = next(filter(lambda n: n not in tested, chain), None)
-    if name is None:
-        return False
-    tested.add(name)
-    def get_deps(name):
-        if name in deps:
-            return deps[name]
-        return []
-    ins = [n for n in get_deps(name) if n not in chain]
-    ix = chain.index(name)
-    for i, n in enumerate(ins):
-        chain.insert(ix + i, n)
-    return True
-
-
 def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
 
@@ -414,14 +370,7 @@ def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warni
     if warning:
         head.append('rem This file is generated from {}, all edits will be lost\n'.format(src_name))
 
-    if len(opts.env_path) > 0 or opts.clear_path:
-        if opts.clear_path:
-            env_path = opts.env_path + ['C:\Windows', 'C:\Windows\System32']
-            pat = 'set PATH={}'
-        else:
-            env_path = opts.env_path
-            pat = 'set PATH={};%PATH%'
-        head += [pat.format(";".join(uniq(env_path))) + '\n']
+    append_path_var(opts, head)
 
     if opts.need_patch_var:
         head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'], opts)
@@ -432,133 +381,6 @@ def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warni
     files = []
 
     res = head + res
-
-    while(True):
-        ok1 = remove_unused_labels(res)
-        ok2 = remove_redundant_gotos(res)
-        if not ok1 and not ok2:
-            break
-
-    return "".join(res), files
-
-
-
-def render_local_main_(defs, deps, thens, shells, top, order, opts: Opts, src_name, echo_off=True, warning=True):
-
-    #print("render_local_main")
-
-    res = []
-
-    files = []
-
-    if not opts.debug and echo_off:
-        res = res + ['@echo off\n']
-
-    if warning:
-        res += ['rem This file is generated from {}, all edits will be lost\n'.format(src_name)]
-
-    if len(opts.env_path) > 0:
-        if opts.clear_path:
-            pat = 'set PATH={};C:\Windows;C:\Windows\System32'
-        else:
-            pat = 'set PATH={};%PATH%'
-        res += [pat.format(";".join(uniq(opts.env_path))) + '\n']
-
-    defs_ = {"top": top}
-    thens_ = dict()
-    shells_ = {"top": 'cmd'}
-    expand_macros(defs_, thens_, shells_, opts)
-    #print(defs_['top'])
-    res.extend(defs_['top'])
-
-    keys, thens_ = compute_order(defs, deps, thens, order)
-    
-    """
-    if opts.main_def:
-        main_def = opts.main_def
-    else:
-        main_def = 'main'
-
-    keys = [main_def] + without(defs.keys(), main_def)
-    """
-
-    #print("order", order)
-    #return "".join(res), files
-
-    
-
-    #print("deps", deps)
-    #print("thens", thens)
-
-    """
-    if not opts.clean:
-        keys = without(keys, 'clean')
-    """
-
-    for name in keys:
-        lines = defs[name]
-        #res.append("rem def {}\n".format(name))
-        res.append(":{}_begin\n".format(name))
-        if opts.debug:
-            res.append("echo {}\n".format(name))
-            #res.append(macro_log(name, [name]))
-        shell = shells[name]
-        if shell == 'cmd':
-            res.append("".join(lines))
-        elif shell in ['msys2', 'python', 'pwsh', 'node']:
-
-            file_content = ''
-            comment = "# "
-            if shell == 'msys2':
-                ext = '.sh'
-                file_content = "#!/bin/bash\n"
-            elif shell == 'python':
-                ext = '.py'
-            elif shell == 'pwsh':
-                ext = '.ps1'
-            elif shell == 'node':
-                ext = '.js'
-                comment = '// '
-                
-            if warning:
-                file_content += comment + WARNING.format(src_name) + "\n"
-
-            file_content += "".join(lines) + "\n"
-
-            #file_content = dedent(file_content)
-            
-            file_name = "{}-{}{}".format(os.path.splitext(src_name)[0], name, ext)
-
-            if shell == 'msys2':
-                res.append('"%MSYS2%" %~dp0{}\n'.format(file_name))
-            elif shell == 'python':
-                res.append('"%PYTHON%" %~dp0{}\n'.format(file_name))
-            elif shell == 'pwsh':
-                res.append('"%PWSH%" %~dp0{}\n'.format(file_name))
-            elif shell == 'node':
-                res.append('"%NODE%" %~dp0{}\n'.format(file_name))
-            
-            files.append((file_name, file_content))
-
-            #print(files)
-
-            if opts.msys2_msystem:
-                res.append("set MSYSTEM={}\n".format(opts.msys2_msystem))
-
-        else:
-            raise Exception('unknown shell {}'.format(shells[name]))
-
-        res.append(":{}_end\n".format(name))
-        
-        goto = None
-        if name in thens_:
-            if thens_[name] != 'exit':
-                goto = "goto {}_begin\n".format(thens_[name])
-        if goto is None:
-            goto = "exit /b\n"
-
-        res.append(goto)
-        res.append("\n")
 
     while(True):
         ok1 = remove_unused_labels(res)
@@ -791,18 +613,9 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     if len(args) == 2:
         print("unzip with 2 args, did you mean :test?", args)
 
-    #force = kwargs.get('force')
-    #keep = kwargs.get('keep')
     test = kwarg_value(kwargs, 'test', 't')
     output = kwarg_value(kwargs, 'output', 'o')
-    #files = kwarg_value(kwargs, 'files', 'f')
 
-    """
-    if opts.zip_in_path or ctx.github:
-        cmd = ['7z']
-    else:
-        cmd = ['"%P7Z%"']
-    """
     cmd = ['7z']
 
     cmd = cmd + ['x', '-y']
@@ -1321,60 +1134,6 @@ def expand_macros(name, lines, opts: Opts, github: bool = False, githubdata: Git
             except ParseMacroError as e:
                 pass
     return res
-
-def expand_macros_(defs, thens, shells, opts: Opts, github: bool = False, githubdata: GithubData = None):
-
-    """
-    if 'clean' not in defs:
-        defs['clean'] = []
-        shells['clean'] = 'cmd'
-    """
-    if githubdata is None:
-        githubdata = GithubData()
-
-    need_rewrap = set()
-
-    for name in defs.keys():
-        shell = shells[name]
-        for i, line in enumerate(defs[name]):
-            if 'foreach' in line and maybe_macro(line):
-                try:
-                    ret, macroname, args, kwargs = parse_macro(line)
-                    if macroname == 'foreach':
-                        ctx = Ctx(github, shell)
-                        exp = macro_foreach(name, args, kwargs, ret, opts, ctx, githubdata)
-                        defs[name][i] = reindent(exp, line)
-                        need_rewrap.add(name)
-                except ParseMacroError as e:
-                    pass
-
-    for name in need_rewrap:
-        defs[name] = rewrap(defs[name])
-
-    for name in defs.keys():
-        shell = shells[name]
-        for i, line in enumerate(defs[name]):
-            if maybe_macro(line):
-                try:
-                    ret, macroname, args, kwargs = parse_macro(line)
-
-                    if macroname in DEPRECATED_MACRO_NAMES:
-                        print("{} is deprecated".format(macroname))
-                        continue
-
-                    ctx = Ctx(github, shell)
-                    exp = globals()['macro_' + macroname](name, args, kwargs, ret, opts, ctx, githubdata)
-                    defs[name][i] = reindent(exp, line)
-                    continue
-                except ParseMacroError as e:
-                    pass
-
-    """
-    if len(defs['clean']) > 0:
-        defs['clean'] = ['pushd %~dp0\n'] + defs['clean'] + ['popd\n']
-    else:
-        del defs['clean']
-    """
 
 def write(path, text):
     if isinstance(path, str):

@@ -10,17 +10,12 @@ WINDOWS_LATEST = "windows-latest"
 class Opts:
     debug: bool = False
     clean: bool = False
-    curl_in_path: bool = False
     curl_user_agent: str = None
     curl_proxy: str = None
     download_test: bool = True
     unzip_test: bool = True
     zip_test: bool = True
     github: bool = False
-    zip_in_path = False
-    git_in_path = False
-    tar_in_path = False
-    patch_in_path = False
     github_workflow = False
     github_image: str = WINDOWS_LATEST
     github_on: int = ON_PUSH
@@ -33,9 +28,6 @@ class Opts:
     need_curl_var: bool = False
     need_patch_var: bool = False
     env_policy: bool = False
-    #main_def: str = None
-    #order: list[str] = field(default_factory=list)
-    #top: list[str] = field(default_factory=list)
 
 def copy_opts(opts: Opts) -> Opts:
     res = Opts()
