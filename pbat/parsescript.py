@@ -63,16 +63,22 @@ def parse_statement(line, opts: Opts) -> bool:
     START = "^"
     END = "\\s*$"
 
-    pat = pat_spacejoin(START, 'msys2[_-]msystem', ID)
+    pat = pat_spacejoin(START, 'msys2[_-]msystem', ID, END)
     m = re.match(pat, line, re.IGNORECASE)
     if m:
         opts.msys2_msystem = m.group(1).strip()
         return True
 
-    pat = pat_spacejoin(START, 'github[_-]image', ID)
+    pat = pat_spacejoin(START, 'github[_-]image', ID, END)
     m = re.match(pat, line)
     if m:
         opts.github_image = m.group(1).strip()
+        return True
+    
+    pat = pat_spacejoin('os', ID, END)
+    m = re.match(pat, line)
+    if m:
+        opts.os = m.group(1)
         return True
     
     pat = pat_spacejoin(START, 'github[_-]on', ID)
@@ -144,7 +150,7 @@ class Script:
     def append(self, i, line):
         # todo redefinitions
         if re.match('\\s*#', line):
-            print("# comments are deprecated, use :: or rem, line {}".format(i))
+            # print("# comments are deprecated, use :: or rem, line {}".format(i))
             return
 
         if parse_statement(line, self._opts):

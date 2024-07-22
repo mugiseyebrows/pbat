@@ -5,6 +5,8 @@ ON_PUSH = 1
 WINDOWS_2019 = "windows-2019"
 WINDOWS_2022 = "windows-2022"
 WINDOWS_LATEST = "windows-latest"
+UBUNTU_LATEST = "ubuntu-latest"
+WINDOWS = 'windows'
 
 @dataclass
 class Opts:
@@ -17,7 +19,7 @@ class Opts:
     zip_test: bool = True
     github: bool = False
     github_workflow = False
-    github_image: str = WINDOWS_LATEST
+    github_image: str = None
     github_on: int = ON_PUSH
     msys2_msystem: str = None
     use_sed: bool = False
@@ -28,6 +30,7 @@ class Opts:
     need_curl_var: bool = False
     need_patch_var: bool = False
     env_policy: bool = False
+    os: str = 'windows'
 
 def copy_opts(opts: Opts) -> Opts:
     res = Opts()

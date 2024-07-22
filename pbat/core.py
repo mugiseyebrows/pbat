@@ -11,11 +11,11 @@ import hashlib
 
 try:
     from .parsemacro import parse_macro, ParseMacroError
-    from .Opts import Opts, copy_opts
+    from .Opts import Opts, copy_opts, WINDOWS_LATEST, UBUNTU_LATEST, WINDOWS
     from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 except ImportError:
     from parsemacro import parse_macro, ParseMacroError
-    from Opts import Opts, copy_opts
+    from Opts import Opts, copy_opts, WINDOWS_LATEST, UBUNTU_LATEST, WINDOWS
     from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 
 WARNING = 'This file is generated from {}, all edits will be lost'
@@ -81,6 +81,12 @@ class GithubData:
 class Ctx:
     github: bool
     shell: str
+    os: str = 'windows'
+
+def get_dst_sh(src):
+    dirname = os.path.dirname(src)
+    basename = os.path.splitext(os.path.basename(src))[0]
+    return os.path.join(dirname, basename + '.sh')
 
 def get_dst_bat(src):
     dirname = os.path.dirname(src)
@@ -137,7 +143,14 @@ def save_workflow(path, steps, opts: Opts, githubdata: GithubData):
     elif on == ON_RELEASE:
         on_ = {"release": {"types": ["created"]}}
 
-    main = {"runs-on":opts.github_image}
+    github_image = opts.github_image
+    if github_image is None:
+        if opts.os == 'windows':
+            github_image = WINDOWS_LATEST
+        else:
+            github_image = UBUNTU_LATEST
+
+    main = {"runs-on":github_image}
 
     matrix = githubdata.matrix.matrix
     include = githubdata.matrix.include
@@ -374,11 +387,14 @@ def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warni
 
     head = []
 
-    if not opts.debug and echo_off:
-        head.append('@echo off\n')
-
-    if warning:
-        head.append('rem This file is generated from {}, all edits will be lost\n'.format(src_name))
+    if opts.os == 'windows':
+        if not opts.debug and echo_off:
+            head.append('@echo off\n')
+        if warning:
+            head.append('rem This file is generated from {}, all edits will be lost\n'.format(src_name))
+    else:
+        head.append('#!/bin/bash\n')
+        head.append('# This file is generated from {}, all edits will be lost\n'.format(src_name))
 
     append_path_var(opts, head)
 
@@ -527,7 +543,7 @@ def macro_find_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
 def quoted(s):
     if "*" in s:
         return s
-    if ' ' in s or '%' in s or '+' in s:
+    if ' ' in s or '%' in s or '+' in s or '$' in s:
         return '"' + s + '"'
     return s
 
@@ -550,16 +566,19 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     cache = kwarg_value(kwargs, 'cache', 'c')
 
-    if opts.env_policy and not ctx.github:
-        curl = '"%CURL%"'
-        opts.need_curl_var = True
+    if opts.os == WINDOWS:
+        if opts.env_policy and not ctx.github:
+            curl = '"%CURL%"'
+            opts.need_curl_var = True
+        else:
+            curl = "curl"
+            if not ctx.github:
+                opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
+                opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
+                opts.env_path.append('C:\\Windows\\System32')
     else:
-        curl = "curl"
-        if not ctx.github:
-            opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
-            opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
-            opts.env_path.append('C:\\Windows\\System32')
-    
+        curl = 'curl'
+        
     user_agent = ""
     if opts.curl_user_agent is not None:
         user_agent = '--user-agent "' + {
@@ -591,20 +610,12 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         wget = "C:\\msys64\\usr\\bin\\wget.exe"
         cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
 
-    if shell == 'cmd':
-        if cache is None:
-            exp = cmd
-        else:
-            exp = "if not exist {} {}\n".format(quoted(dest), cmd)
-    elif shell == 'msys2':
-        if cache is None:
-            exp = cmd
-        else:
-            exp = "if [ ! -f {} ]; then {}; fi\n".format(quoted(dest), cmd)
+    if opts.os == WINDOWS:
+        cond = 'not exist {}'.format(quoted(dest))
+        return if_group_windows(cond, [cmd])
     else:
-        raise Exception('not implemented for shell {}'.format(shell))
-
-    return exp
+        cond = '! -e {}'.format(quoted(dest))
+        return if_group_linux(cond, [cmd])
 
 def kwarg_value(kwargs, *names):
     for name in names:
@@ -615,35 +626,31 @@ def kwarg_value(kwargs, *names):
 
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    if not ctx.github:
-        opts.env_path.append('C:\\Program Files\\7-Zip')
-
     src = args[0]
-
-    if len(args) == 2:
-        print("unzip with 2 args, did you mean :test?", args)
-
     test = kwarg_value(kwargs, 'test', 't')
     output = kwarg_value(kwargs, 'output', 'o')
 
-    cmd = ['7z']
-
-    cmd = cmd + ['x', '-y']
-    if output:
-        cmd.append("-o{}".format(quoted(output)))
-    cmd.append(quoted(src))
-
-    for arg in args[1:]:
-        cmd.append(quoted(arg))
-
-    exp = " ".join(cmd) + "\n"
-
-    if test:
-        exp = "if not exist {} ".format(quoted(test)) + exp
+    if opts.os == 'windows':
+        if not ctx.github:
+            opts.env_path.append('C:\\Program Files\\7-Zip')
+        cmd = ['7z']
+        cmd = cmd + ['x', '-y']
+        if output:
+            cmd.append("-o{}".format(quoted(output)))
+        cmd.append(quoted(src))
+        for arg in args[1:]:
+            cmd.append(quoted(arg))
+        expr = " ".join(cmd) + "\n"
+        if test:
+            expr = "if not exist {} ".format(quoted(test)) + expr
     else:
-        pass
-
-    return exp
+        cmd = ['unzip', quoted(src)]
+        if output:
+            cmd.extend(['-d', quoted(output)])
+        expr = ' '.join(cmd)
+        if test:
+            expr = 'if [ ! -e {} ];\nthen {}\nfi'.format(quoted(src), expr)
+    return expr
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
@@ -707,8 +714,13 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     return " ".join(cmd) + "\n"
     
 def macro_mkdir(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    arg = args[0]
-    return "if not exist {} mkdir {}\n".format(quoted(arg), quoted(arg))
+    path = args[0]
+    cmd = "mkdir {}".format(quoted(path))
+    if opts.os == WINDOWS:
+        cond = 'not exist {}'.format(quoted(path))
+        return if_group_windows(cond, [cmd])
+    else:
+        return "mkdir -p {}".format(quoted(path))
 
 def macro_log(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     arg = args[0]
@@ -731,13 +743,25 @@ def macro_clean_file(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: 
     arg = args[0]
     return "del /q \"{}\"\n".format(arg)
 
-def if_group(cond, cmds):
+def if_group_windows(cond, cmds):
     if len(cmds) == 1:
         return "if {} {}\n".format(cond, cmds[0])
     return """if {} (
     {}
 )
 """.format(cond, "\n    ".join(cmds))
+
+def if_group_linux(cond, cmds):
+    return """if [[ {} ]]; then
+    {}
+fi
+""".format(cond, "\n    ".join(cmds))
+
+def do_in_path(path, cmds):
+    return """pushd {}
+    {}
+popd
+""".format(quoted(path), "\n    ".join(cmds))
 
 def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     url = args[0]
@@ -747,38 +771,44 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
         dir = None
 
     branch = kwarg_value(kwargs, 'b', 'branch', 'ref')
-    submodules = kwarg_value(kwargs, 'submodules', 'recurse-submodules')
+    submodules = kwarg_value(kwargs, 'submodules', 'recurse-submodules', 's')
+    pull = kwarg_value(kwargs, 'p', "pull")
     
     basename = os.path.splitext(os.path.basename(url))[0]
     if dir:
         basename = dir
+    if branch:
+        checkout = " ".join([git, 'checkout', branch])
 
-    opts.env_path.append('C:\\Program Files\\Git\\cmd')
     git = 'git'
-
     clone = [git, 'clone']
     if submodules is not None:
         clone.append('--recurse-submodules')
     clone.append(url)
-
     if dir:
         clone.append(dir)
     clone = " ".join(clone)
 
-    cond = "not exist {}".format(quoted(basename))
+    if opts.os == WINDOWS:
+        cond = "not exist {}".format(quoted(basename))
+    else:
+        cond = '! -e {}'.format(quoted(basename))
 
     if branch:
-        checkout = " ".join([git, 'checkout', branch])
         cmds = [clone, "pushd {}".format(basename), "    " + checkout, "popd"]
     else:
         cmds = [clone]
 
-    cmd = if_group(cond, cmds)
-    if kwargs.get('pull'):
-        cmd = cmd + """pushd {}
-    {} pull
-popd
-""".format(basename, git)
+    if opts.os == WINDOWS:
+        if not ctx.github:
+            opts.env_path.append('C:\\Program Files\\Git\\cmd')
+
+    if opts.os == WINDOWS:
+        cmd = if_group_windows(cond, cmds)
+    else:
+        cmd = if_group_linux(cond, cmds)
+    if pull:
+        cmd = cmd + do_in_path(basename, ['git pull'])
 
     return cmd
 
@@ -1031,6 +1061,10 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     else:
         raise ValueError("use requires at least one arg")
 
+    if app == 'mingw1220':
+        app = 'mingw'
+        ver = '12.2.0'
+
     if app in ['conda', 'miniconda']:
         if ctx.github:
             opts.env_path.append('C:\Miniconda')
@@ -1065,14 +1099,16 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     elif app == 'perl':
         opts.env_path.append('C:\\Strawberry\\perl\\bin')
     elif app == 'cmake':
-        if not ctx.github:
-            opts.env_path.append('C:\\Program Files\\CMake\\bin')
+        if opts.os == WINDOWS:
+            if not ctx.github:
+                opts.env_path.append('C:\\Program Files\\CMake\\bin')
     elif app == 'ninja':
-        if ctx.github:
-            opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
-            opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
-        else:
-            opts.env_path.append('C:\\Program Files\\Meson')
+        if opts.os == WINDOWS:
+            if ctx.github:
+                opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
+                opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
+            else:
+                opts.env_path.append('C:\\Program Files\\Meson')
     elif app == 'mingw':
         if ver in ['5', '5.4.0', '540_32']:
             opts.env_path.append('C:\\mingw540_32\\bin')
@@ -1080,6 +1116,10 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
             opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
         elif ver in ['11', '11.2.0', '1120_64']:
             opts.env_path.append('C:\\mingw1120_64\\bin')
+        elif ver in ['12', '12.2.0']:
+            if not ctx.github:
+                opts.env_path.append('C:\\mingw1220_64\\bin')
+                opts.env_path.append('C:\\mingw64\\bin')
         else:
             raise ValueError("use not implemented for {} {}".format(app, ver))
     elif app == 'qt':
@@ -1230,7 +1270,7 @@ def github_check_cd(text):
     if problem in text:
         raise Exception("{} does not work on github actions use %CD%".format(problem))
 
-def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
+def read_compile_write(src, dst_bat, dst_sh, dst_workflow, verbose=True, echo_off=True, warning=True):
 
     if isinstance(src, str):
         src_name = os.path.basename(src)
@@ -1244,8 +1284,13 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     opts = script._opts
     text, files = render_local_main(script, opts, src_name, echo_off, warning)
     text = dedent(text)
-    write(dst_bat, text)
-    dst_paths.append(dst_bat)
+
+    if opts.os == 'windows':
+        write(dst_bat, text)
+        dst_paths.append(dst_bat)
+    else:
+        write(dst_sh, text)
+        dst_paths.append(dst_sh)
 
     if opts.github_workflow:
         script = parse_script(src, github=True)
@@ -1263,7 +1308,10 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             github_check_cd(text)
             if text == '':
                 continue
-            shell = 'cmd'
+            if opts.os == WINDOWS:
+                shell = 'cmd'
+            else:
+                shell = 'bash'
             condition = None
             step = GithubShellStep(text, shell, name, condition)
             steps2.append(make_github_step(step, opts, githubdata))

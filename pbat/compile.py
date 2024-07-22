@@ -3,9 +3,9 @@ import argparse
 import glob
 
 try:
-    from .core import read_compile_write, get_dst_bat, get_dst_workflow
+    from .core import read_compile_write, get_dst_bat, get_dst_workflow, get_dst_sh
 except ImportError:
-    from core import read_compile_write, get_dst_bat, get_dst_workflow
+    from core import read_compile_write, get_dst_bat, get_dst_workflow, get_dst_sh
 
 def find_pbats(path):
     paths = []
@@ -47,6 +47,7 @@ def main():
             pass
         else:
             dst_bat = get_dst_bat(src)
+            dst_sh = get_dst_sh(src)
             dst_workflow = get_dst_workflow(src)
         if src == dst_bat:
             print("src == dst", src)
@@ -54,7 +55,7 @@ def main():
 
         try:
             #print(src, dst_bat, dst_workflow)
-            read_compile_write(src, dst_bat, dst_workflow)
+            read_compile_write(src, dst_bat, dst_sh, dst_workflow)
         except Exception as e:
             if os.environ.get('DEBUG_PBAT') == '1':
                 raise e
