@@ -39,6 +39,7 @@ class GithubSetupMsys2:
     msystem: str = None
     install: str = None
     update: bool = True
+    release: bool = True
 
 (
     SHELL_CMD,
@@ -168,6 +169,13 @@ def save_workflow(path, steps, opts: Opts, githubdata: GithubData):
 def make_checkout_step():
     return {"name": "checkout", "uses": "actions/checkout@v4"}
 
+def to_bool(v):
+    if v in [0, None, "False", "false", "off", "0"]:
+        return False
+    if v in [1, True, "True", "true", "on", "1"]:
+        return True
+    raise ValueError("cannot convert {} to bool".format(v))
+
 def make_setup_msys2_step(data: GithubSetupMsys2, opts: Opts):
     if data.msystem:
         msystem = data.msystem
@@ -181,12 +189,13 @@ def make_setup_msys2_step(data: GithubSetupMsys2, opts: Opts):
         "uses": "msys2/setup-msys2@v2",
         "with": {
             "msystem": msystem,
+            "release": to_bool(data.release)
         }
     }
     if data.install:
-        obj["with"]["install"] = data.install
+        obj["with"]["install"] = " ".join(data.install)
     if data.update is not None:
-        obj["with"]["update"] = data.update
+        obj["with"]["update"] = to_bool(data.update)
     return obj
 
 def make_setup_node_step(data: GithubSetupNode):
@@ -293,6 +302,7 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
     head = []
     append_path_var(opts, head)
     lines = head + lines
+    lines = [re.sub('[ ]+$', '', line) for line in lines] # replace trailing spaces
     res.append(":{}_begin\n".format(name))
     res.append("".join(lines))
     res.append(":{}_end\n".format(name))
@@ -871,7 +881,12 @@ def macro_github_upload(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdat
     path = args
     upload_name = kwarg_value(kwargs, "n", "name")
     if upload_name is None:
-        upload_name = os.path.splitext(os.path.basename(path[0]))[0]
+        basename = os.path.basename(path[0])
+        name_, ext = os.path.splitext(basename)
+        if re.match("^[a-zA-Z0-9.]{4,5}$", ext):
+            upload_name = name_
+        else:
+            upload_name = basename
         upload_name = upload_name.replace('*', '')
     githubdata.upload.append(GithubUpload(upload_name, path))
     return '\n'
@@ -903,13 +918,14 @@ def macro_github_matrix_exclude(name, args, kwargs, ret, opts: Opts, ctx: Ctx, g
     return '\n'
 
 def macro_github_setup_msys2(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("setup_msys2", args, kwargs, ret, 0, 0, {"m", "msystem", "i", "install", "u", "update"})
+    validate_args("setup_msys2", args, kwargs, ret, None, None, {"m", "msystem", "u", "update", "r", "release"})
+    install = args
     msystem = kwarg_value(kwargs, "m", "msystem")
-    install = kwarg_value(kwargs, "i", "install")
+    #install = kwarg_value(kwargs, "i", "install")
     update = kwarg_value(kwargs, "u", "update")
-    if update is not None:
-        update = {"false":False, "true":True}[update]
-    githubdata.setup_msys2 = GithubSetupMsys2(msystem, install, update)
+    release = kwarg_value(kwargs, "r", "release")
+
+    githubdata.setup_msys2 = GithubSetupMsys2(msystem, install, update, release)
     return '\n'
 
 def macro_github_setup_node(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
@@ -990,16 +1006,16 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
             raise ValueError("install(mingw, {}) not implemented".format(ver))
 
     elif app in ['aqt', 'aqtinstall']:
-        return 'where aqt 2> NUL || pip install aqtinstall'
+        return 'where aqt > NUL 2>&1 || pip install aqtinstall'
 
     elif app == 'mugideploy':
-        return 'where mugideploy 2> NUL || pip install mugideploy'
+        return 'where mugideploy > NUL 2>&1 || pip install mugideploy'
 
     elif app == 'mugicli':
-        return 'where pyfind 2> NUL || pip install mugicli'
+        return 'where pyfind > NUL 2>&1 || pip install mugicli'
 
     elif app == 'mugisync':
-        return 'where mugisync 2> NUL || pip install mugisync'
+        return 'where mugisync > NUL 2>&1 || pip install mugisync'
     
     raise ValueError("install({}) not implemented".format(app))
 
@@ -1079,6 +1095,17 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
             opts.env_path.append('C:\\Qt\\{}\\mingw81_64\\bin'.format(ver))
         elif ver.startswith('4.'):
             opts.env_path.append('C:\\Qt-{}\\bin'.format(ver))
+    elif app == 'msys':
+        if ver is None:
+            ver = 'ucrt64'
+        if ver in ['ucrt64', 'UCRT64']:
+            if ctx.github:
+                opts.env_path.append("%RUNNER_TEMP%\\msys64\\ucrt64\\bin")
+                opts.env_path.append("%RUNNER_TEMP%\\msys64\\ucrt64\\share\\qt6\\bin")
+            opts.env_path.append("C:\\msys64\\ucrt64\\bin")
+            opts.env_path.append("C:\\msys64\\ucrt64\\share\\qt6\\bin")
+        else:
+            raise ValueError("use not implemented for {} {}".format(app, ver))
     else:
         raise ValueError("use not implemented for {}".format(app))
 
