@@ -13,10 +13,11 @@ parser = Lark(GRAMMAR)
 def find_data(tree, data, trace = False):
     return [child for child in tree.children if hasattr(child, 'data') and child.data == data]
 
+DEF_RX = re.compile('\\s*def\\s+([0-9a-z_]+)', re.IGNORECASE)
+
 def parse_def(line):
 
-    pat = '\\s*def\\s+([0-9a-z_]+)'
-    m = re.match(pat, line, re.IGNORECASE)
+    m = DEF_RX.match(line)
     if m is None:
         return None
 

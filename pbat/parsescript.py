@@ -33,10 +33,10 @@ DEPRECATED_MACRO_NAMES = [
 ]
 
 try:
-    from .parsedef import parse_def
+    from .parsedef import parse_def, DEF_RX
     from .Opts import Opts
 except ImportError:
-    from parsedef import parse_def
+    from parsedef import parse_def, DEF_RX
     from Opts import Opts
 
 def pat_spacejoin(*pat):
@@ -228,6 +228,16 @@ def parse_script(src, github) -> Script:
         if not changed:
             break
     lines[-1] = lines[-1] + "\n"
+
+    has_def = False
+    for line in lines:
+        if DEF_RX.match(line):
+            has_def = True
+            break
+
+    if not has_def:
+        lines = ['def main\n'] + lines
+
     script = Script()
     for i, line in enumerate(lines):
         script.append(i, line)
