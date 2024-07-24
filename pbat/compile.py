@@ -16,6 +16,9 @@ def find_pbats(path):
         paths.append(p)
     return paths
 
+def replace_ext(path, ext):
+    return os.path.splitext(path)[0] + ext
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs='*', help='file, directory or glob')
@@ -31,7 +34,21 @@ def main():
             if os.path.isdir(path):
                 paths += find_pbats(path)
             else:
-                paths.append(path)
+                if os.path.isfile(path):
+                    path_ = replace_ext(path, '.pbat')
+                    if os.path.isfile(path_):
+                        paths.append(path_)
+                    else:
+                        paths.append(path)
+                else:
+                    if os.path.splitext(path)[1] == '':
+                        path_ = path + '.pbat'
+                        if os.path.exists(path_):
+                            paths.append(path_)
+                        else:
+                            print("{} not found".format(path_))
+                    else:
+                        print("{} not found".format(path))
 
     if len(args.path) == 0:
         paths = find_pbats('.')
