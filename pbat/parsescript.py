@@ -227,6 +227,7 @@ def parse_script(src, github) -> Script:
         lines, changed = insert_includes(dirname, lines, included)
         if not changed:
             break
+    lines[-1] = lines[-1] + "\n"
     script = Script()
     for i, line in enumerate(lines):
         script.append(i, line)
