@@ -861,8 +861,16 @@ def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubd
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
     for n in args:
-        res.append('where {} || echo {} not found'.format(n, n))
+        res.append('where {} 2> NUL || echo {} not found'.format(n, n))
     return "\n".join(res) + "\n"
+
+def macro_assert(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    lines1 = []
+    lines2 = []
+    for arg in args:
+        lines1.append('where {} > NUL 2>&1 || echo {} not found\n'.format(arg, arg))
+        lines2.append('where {} > NUL 2>&1 || exit /b\n'.format(arg, arg))
+    return "\n".join(lines1) + "\n" + "\n".join(lines2) + "\n"
 
 def macro_if_arg(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     value, defname = args
