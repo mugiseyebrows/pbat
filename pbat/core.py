@@ -286,7 +286,7 @@ def uniq(vs):
 def append_path_var(opts: Opts, head: list[str]):
     if len(opts.env_path) > 0 or opts.clear_path:
         if opts.clear_path:
-            env_path = opts.env_path + ['C:\Windows', 'C:\Windows\System32']
+            env_path = opts.env_path + ['C:\\Windows', 'C:\\Windows\\System32']
             pat = 'set PATH={}'
         else:
             env_path = opts.env_path
@@ -1041,11 +1041,11 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
 
     if app in ['conda', 'miniconda']:
         if ctx.github:
-            opts.env_path.append('C:\Miniconda')
-            opts.env_path.append('C:\Miniconda\\Scripts')
+            opts.env_path.append('C:\\Miniconda')
+            opts.env_path.append('C:\\Miniconda\\Scripts')
         else:
-            opts.env_path.append('C:\Miniconda3')
-            opts.env_path.append('C:\Miniconda3\\Scripts')
+            opts.env_path.append('C:\\Miniconda3')
+            opts.env_path.append('C:\\Miniconda3\\Scripts')
             opts.env_path.append('%USERPROFILE%\\Miniconda3')
             opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
     elif app == 'psql':

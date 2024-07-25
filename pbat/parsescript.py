@@ -144,7 +144,7 @@ class Script:
     def append(self, i, line):
         # todo redefinitions
         if re.match('\\s*#', line):
-            print("# comments are deprecated, use :: or rem, line {}".format(i))
+            # print("# comments are deprecated, use :: or rem, line {}".format(i))
             return
 
         if parse_statement(line, self._opts):
