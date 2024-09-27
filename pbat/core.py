@@ -1018,6 +1018,9 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
 
     elif app == 'mugideploy':
         return 'where mugideploy > NUL 2>&1 || pip install mugideploy'
+    
+    elif app == 'ninja':
+        return 'where ninja > NUL 2>&1 || pip install ninja'
 
     elif app == 'mugicli':
         return 'where pyfind > NUL 2>&1 || pip install mugicli'
@@ -1027,9 +1030,17 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
     
     raise ValueError("install({}) not implemented".format(app))
 
+def parse_python_ver(ver: str):
+    m = re.match('([23])[.]?([0-9]+)', ver)
+    if m:
+        maj = int(m.group(1))
+        min = int(m.group(2))
+        return maj, min
+
 def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     ver = None
     arch = None
+
     if len(args) == 3:
         app, ver, arch = args
     elif len(args) == 2:
@@ -1048,6 +1059,17 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
             opts.env_path.append('C:\\Miniconda3\\Scripts')
             opts.env_path.append('%USERPROFILE%\\Miniconda3')
             opts.env_path.append('%USERPROFILE%\\Miniconda3\\Scripts')
+    elif app == 'python':
+        ver_ = args[1:]
+        if len(ver_) == 0:
+            ver = [(3, i) for i in range(8, 15)]
+        else:
+            ver = [parse_python_ver(e) for e in ver_]
+        for maj, min in ver:
+            opts.env_path.append("%LOCALAPPDATA%\\Programs\\Python\\Python{}{}".format(maj, min))
+            opts.env_path.append("%LOCALAPPDATA%\\Programs\\Python\\Python{}{}\\Scripts".format(maj, min))
+            opts.env_path.append("C:\\Python{}{}".format(maj, min))
+            opts.env_path.append("C:\\Python{}{}\\Scripts".format(maj, min))
     elif app == 'psql':
         if ver is None:
             ver = '14'
