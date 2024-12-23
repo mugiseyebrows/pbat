@@ -550,6 +550,8 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     cache = kwarg_value(kwargs, 'cache', 'c')
 
+    verbose = kwarg_value(kwargs, 'verbose', 'v')
+
     if opts.env_policy and not ctx.github:
         curl = '"%CURL%"'
         opts.need_curl_var = True
@@ -595,7 +597,10 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         if cache is None:
             exp = cmd
         else:
-            exp = "if not exist {} {}\n".format(quoted(dest), cmd)
+            if verbose:
+                exp = "if not exist {} (\n    echo downloading {}\n    {}\n)\n".format(quoted(dest), os.path.basename(url), cmd)
+            else:
+                exp = "if not exist {} {}\n".format(quoted(dest), cmd)
     elif shell == 'msys2':
         if cache is None:
             exp = cmd
