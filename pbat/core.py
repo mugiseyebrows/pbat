@@ -558,8 +558,8 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
     else:
         curl = "curl"
         if not ctx.github:
-            opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
-            opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
+            #opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
+            #opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
             opts.env_path.append('C:\\Windows\\System32')
     
     user_agent = ""
@@ -692,8 +692,7 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p1"})
 
     opts.use_patch = True
-
-    if opts.env_policy and not ctx.github:
+    if (opts.env_policy and not ctx.github) or opts.use_patch_var:
         patch = '"%PATCH%"'
         opts.need_patch_var = True
     else:
@@ -865,8 +864,12 @@ def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubd
 
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     res = []
+    assert_ = kwarg_value(kwargs, "assert", "a")
     for n in args:
-        res.append('where {} 2> NUL || echo {} not found'.format(n, n))
+        if assert_:
+            res.append('where {} 2> NUL || (\n    echo {} not found\n    exit /b 1\n)'.format(n, n))
+        else:
+            res.append('where {} 2> NUL || echo {} not found'.format(n, n))
     return "\n".join(res) + "\n"
 
 def macro_assert(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):

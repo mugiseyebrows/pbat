@@ -45,7 +45,7 @@ def pat_spacejoin(*pat):
 
 def parse_statement(line, opts: Opts) -> bool:
 
-    m = re.match('^\\s*(env[_-]policy|debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
+    m = re.match('^\\s*(env[_-]policy|use[_-]patch[_-]var|debug|clean|download[_-]test|unzip[_-]test|zip[_-]test|github|github[_-]workflow)\\s+(off|on|true|false|1|0)\\s*$', line)
     if m is not None:
         optname = m.group(1).replace("-","_")
         optval = m.group(2) in ['on','true','1']
@@ -227,7 +227,9 @@ def parse_script(src, github) -> Script:
         lines, changed = insert_includes(dirname, lines, included)
         if not changed:
             break
-    lines[-1] = lines[-1] + "\n"
+
+    if len(lines) > 0:
+        lines[-1] = lines[-1] + "\n"
 
     has_def = False
     for line in lines:

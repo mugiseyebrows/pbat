@@ -28,6 +28,7 @@ class Opts:
     need_curl_var: bool = False
     need_patch_var: bool = False
     env_policy: bool = False
+    use_patch_var: bool = False
 
 def copy_opts(opts: Opts) -> Opts:
     res = Opts()
