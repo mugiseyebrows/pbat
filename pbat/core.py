@@ -752,6 +752,7 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
 
     branch = kwarg_value(kwargs, 'b', 'branch', 'ref')
     submodules = kwarg_value(kwargs, 'submodules', 'recurse-submodules')
+    depth = kwarg_value(kwargs, 'd', 'depth')
     
     basename = os.path.splitext(os.path.basename(url))[0]
     if dir:
@@ -763,6 +764,9 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     clone = [git, 'clone']
     if submodules is not None:
         clone.append('--recurse-submodules')
+    if depth is not None:
+        clone.append('--depth')
+        clone.append(depth)
     clone.append(url)
 
     if dir:
