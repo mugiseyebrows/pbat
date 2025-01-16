@@ -96,6 +96,11 @@ def parse_statement(line, opts: Opts) -> bool:
         opts.curl_proxy = m.group(1).rstrip()
         return True
     
+    m = re.search('^workflow[_-]name (.*)', line)
+    if m:
+        opts.workflow_name = m.group(1).strip()
+        return True
+    
     return False
 
 def parse_order(line):

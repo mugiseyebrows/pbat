@@ -153,7 +153,7 @@ def save_workflow(path, steps, opts: Opts, githubdata: GithubData):
 
     main['steps'] = steps
 
-    data = {"name":"main","on":on_}
+    data = {"name":opts.workflow_name, "on":on_}
 
     if opts.msys2_msystem:
         data["env"] = {
@@ -617,12 +617,18 @@ def kwarg_value(kwargs, *names):
         if value is not None:
             return value
 
+def use_7z(ctx, opts):
+    opts.env_path.append('C:\\Program Files\\7-Zip')
+
+def use_cmake(ctx, opts):
+    opts.env_path.append('C:\\Program Files\\CMake\\bin')
+
+def use_ninja(ctx, opts):
+    pass
 
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    if not ctx.github:
-        opts.env_path.append('C:\\Program Files\\7-Zip')
-
+    use_7z(ctx, opts)
     src = args[0]
 
     if len(args) == 2:
@@ -652,8 +658,7 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
 def macro_zip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    if not ctx.github:
-        opts.env_path.append('C:\\Program Files\\7-Zip')
+    use_7z(ctx, opts)
 
     COMPRESSION_MODE = {
         "-mx0": "copy",
@@ -1097,7 +1102,7 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
         opts.env_path.append('C:\\mysql-{}-winx64\\bin'.format(ver))
         opts.env_path.append('C:\\mysql-{}-winx64\\lib'.format(ver))
     elif app == '7z':
-        opts.env_path.append('C:\\Program Files\\7-Zip')
+        use_7z(ctx, opts)
     elif app == 'git':
         opts.env_path.append('C:\\Program Files\\Git\\cmd')
     elif app == 'sed':
@@ -1107,36 +1112,9 @@ def macro_use(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubD
     elif app == 'perl':
         opts.env_path.append('C:\\Strawberry\\perl\\bin')
     elif app == 'cmake':
-        if not ctx.github:
-            opts.env_path.append('C:\\Program Files\\CMake\\bin')
+        use_cmake(ctx, opts)
     elif app == 'ninja':
-        if ctx.github:
-            opts.env_path.append('C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja')
-            opts.env_path.append('C:\\Program Files (x86)\\Android\\android-sdk\\cmake\\3.22.1\\bin')
-        else:
-            opts.env_path.append('C:\\Program Files\\Meson')
-    elif app == 'mingw':
-        if ver in ['5', '5.4.0', '540_32']:
-            opts.env_path.append('C:\\mingw540_32\\bin')
-        elif ver in ['8', '8.1.0', '810_64']:
-            opts.env_path.append('C:\\Qt\\Tools\\mingw810_64\\bin')
-        elif ver in ['11', '11.2.0', '1120_64']:
-            opts.env_path.append('C:\\mingw1120_64\\bin')
-        else:
-            raise ValueError("use not implemented for {} {}".format(app, ver))
-    elif app == 'qt':
-        if ver == '6':
-            ver = '6.7.1'
-        elif ver == '5':
-            ver = '5.15.2'
-        elif ver == '4':
-            ver = '4.8.7'
-        if ver.startswith('6.'):
-            opts.env_path.append('C:\\Qt\\{}\\mingw1120_64\\bin'.format(ver))
-        elif ver.startswith('5.'):
-            opts.env_path.append('C:\\Qt\\{}\\mingw81_64\\bin'.format(ver))
-        elif ver.startswith('4.'):
-            opts.env_path.append('C:\\Qt-{}\\bin'.format(ver))
+        use_ninja(ctx, opts)
     elif app == 'msys':
         if ver is None:
             ver = 'ucrt64'

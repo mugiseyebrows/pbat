@@ -29,6 +29,7 @@ class Opts:
     need_patch_var: bool = False
     env_policy: bool = False
     use_patch_var: bool = False
+    workflow_name: str = 'main'
 
 def copy_opts(opts: Opts) -> Opts:
     res = Opts()
