@@ -301,6 +301,9 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
     lines = expand_macros(name, function._body, opts, github, github_data)
     head = []
     append_path_var(opts, head)
+    #print('render_function', function._name, opts.need_patch_var)
+    if opts.need_patch_var:
+        head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'], opts)
     lines = head + lines
     lines = [re.sub('[ ]+$', '', line) for line in lines] # replace trailing spaces
     res.append(":{}_begin\n".format(name))
@@ -552,6 +555,8 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     verbose = kwarg_value(kwargs, 'verbose', 'v')
 
+    test = kwarg_value(kwargs, 'test', 't')
+
     if opts.env_policy and not ctx.github:
         curl = '"%CURL%"'
         opts.need_curl_var = True
@@ -601,6 +606,9 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
                 exp = "if not exist {} (\n    echo downloading {}\n    {}\n)\n".format(quoted(dest), os.path.basename(url), cmd)
             else:
                 exp = "if not exist {} {}\n".format(quoted(dest), cmd)
+
+            if test and os.path.splitext(dest)[1].lower() in ['.7z', '.zip']:
+                exp = '7z t {} > NUL || del /f {}\n'.format(quoted(dest), quoted(dest)) + exp
     elif shell == 'msys2':
         if cache is None:
             exp = cmd
@@ -697,7 +705,7 @@ def macro_patch(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     validate_args("patch", args, kwargs, ret, 1, 1, {"N", "forward", "p1"})
 
     opts.use_patch = True
-    if (opts.env_policy and not ctx.github) or opts.use_patch_var:
+    if opts.env_policy or opts.use_patch_var:
         patch = '"%PATCH%"'
         opts.need_patch_var = True
     else:

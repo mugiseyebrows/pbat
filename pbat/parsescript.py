@@ -206,7 +206,7 @@ def insert_includes(dirname, lines, included: set[str]):
     res = []
     changed = False
     for line in lines:
-        m = re.match('\\s*include\((.*)\)', line)
+        m = re.match('\\s*include\\((.*)\\)', line)
         if m:
             name = m.group(1)
             if os.path.splitext(name)[1] == '':
