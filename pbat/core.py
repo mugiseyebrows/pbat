@@ -775,6 +775,10 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
     git = 'git'
 
     clone = [git, 'clone']
+
+    if branch:
+        clone.extend(['-b', branch])
+
     if submodules is not None:
         clone.append('--recurse-submodules')
     if depth is not None:
@@ -788,11 +792,7 @@ def macro_git_clone(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: G
 
     cond = "not exist {}".format(quoted(basename))
 
-    if branch:
-        checkout = " ".join([git, 'checkout', branch])
-        cmds = [clone, "pushd {}".format(basename), "    " + checkout, "popd"]
-    else:
-        cmds = [clone]
+    cmds = [clone]
 
     cmd = if_group(cond, cmds)
     if kwargs.get('pull'):
@@ -839,13 +839,17 @@ def macro_copy(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Github
     return "copy /y {} {}\n".format(quoted(src), quoted(dst))
 
 def macro_move(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
-    validate_args("move", args, kwargs, ret, 2, 2, ["github", "g", "i", "ignore-errors"], False)
+    #validate_args("move", args, kwargs, ret, 2, 2, ["github", "g", "i", "ignore-errors"], False)
     github = kwarg_value(kwargs, "github", "g")
+    test = kwarg_value(kwargs, "test", "t")
     ignore_errors = kwarg_value(kwargs, "ignore-errors", "i")
     src, dst = args
     if not ctx.github and github:
         return '\n'
-    res = ["move /y {} {}".format(quoted(src), quoted(dst))]
+    if test:
+        res = ["if exist {} move /y {} {}".format(quoted(src), quoted(src), quoted(dst))]
+    else:
+        res = ["move /y {} {}".format(quoted(src), quoted(dst))]
     if ignore_errors:
         res.append("echo 1 > NUL")
     return " || ".join(res) + "\n"
