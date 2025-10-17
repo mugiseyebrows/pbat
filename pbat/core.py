@@ -557,15 +557,8 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     test = kwarg_value(kwargs, 'test', 't')
 
-    if opts.env_policy and not ctx.github:
-        curl = '"%CURL%"'
-        opts.need_curl_var = True
-    else:
-        curl = "curl"
-        if not ctx.github:
-            #opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
-            #opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
-            opts.env_path.append('C:\\Windows\\System32')
+    curl = "curl"
+    opts.env_path.append('C:\\Windows\\System32')
     
     user_agent = ""
     if opts.curl_user_agent is not None:
