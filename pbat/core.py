@@ -182,7 +182,7 @@ def make_setup_msys2_step(data: GithubSetupMsys2, opts: Opts):
     elif opts.msys2_msystem:
         msystem = opts.msys2_msystem
     else:
-        msystem = 'MINGW64'
+        msystem = 'UCRT64'
 
     obj = {
         "name": "setup-msys2",
@@ -243,7 +243,7 @@ def make_github_step(step: GithubShellStep, opts: Opts, githubdata: GithubData):
         if githubdata.setup_msys2:
             shell = "msys2 {0}"
         else:
-            print("warning: you might forgot to add github_setup_msys2() to script")
+            #print("warning: you might forgot to add github_setup_msys2() to script")
             shell = "C:\\msys64\\usr\\bin\\bash.exe {0}"
     
     if shell == "node":
@@ -298,6 +298,11 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
     opts = copy_opts(opts)
     github = True
     name = function._name
+
+    shell = function._shell
+    if shell is None:
+        shell = 'cmd'
+
     lines = expand_macros(name, function._body, opts, github, github_data)
     head = []
     append_path_var(opts, head)
@@ -306,15 +311,18 @@ def render_function(function: Function, opts: Opts, github_data: GithubData):
         head += expand_macros(name, ['PATCH = find_app(C:\\Program Files\\Git\\usr\\bin\\patch.exe)\n'], opts)
     lines = head + lines
     lines = [re.sub('[ ]+$', '', line) for line in lines] # replace trailing spaces
-    res.append(":{}_begin\n".format(name))
-    res.append("".join(lines))
-    res.append(":{}_end\n".format(name))
-    res.append("\n")
-    while(True):
-        ok1 = remove_unused_labels(res)
-        ok2 = remove_redundant_gotos(res)
-        if not ok1 and not ok2:
-            break
+    if shell == 'msys2':
+        res.append("".join(lines))
+    else:
+        res.append(":{}_begin\n".format(name))
+        res.append("".join(lines))
+        res.append(":{}_end\n".format(name))
+        res.append("\n")
+        while(True):
+            ok1 = remove_unused_labels(res)
+            ok2 = remove_redundant_gotos(res)
+            if not ok1 and not ok2:
+                break
     return "".join(res)
 
 def dedent(text):
@@ -346,25 +354,52 @@ def insert_after(a, b, keys):
     keys.insert(keys.index(b) + 1, a)
     return True
 
+def no_ext(name):
+    return os.path.splitext(name)[0]
+
 def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warning=True):
     res = []
 
+    files = []
+
     keys, thens = script.compute_order()
+
+    have_msys2 = False
     for name in keys:
         function = script.function(name)
+        shell = function._shell
+        if shell == 'msys2':
+            have_msys2 = True
+
+    if have_msys2:
+        res.append("set CHERE_INVOKING=yes\n")
+        res.append("set MSYSTEM=UCRT64\n")
+
+    for name in keys:
+        function = script.function(name)
+        shell = function._shell
+        if shell is None:
+            shell = 'cmd'
         lines = expand_macros(name, function._body, opts, False)
         #res.append("rem def {}\n".format(name))
         res.append(":{}_begin\n".format(name))
         if opts.debug:
             res.append("echo {}\n".format(name))
             #res.append(macro_log(name, [name]))
-        shell = function._shell
-        if shell is None:
-            shell = 'cmd'
         if shell == 'cmd':
-            res.append("".join(lines))
+            res.append("".join(lines))            
         else:
-            raise Exception('not implemented')
+            gl = '-'
+            if '-' in src_name:
+                gl = '-'
+            elif '_' in src_name:
+                gl = '_'
+            
+            file_name = no_ext(src_name) + gl + name + '.sh'
+            res.append("")
+            res.append("C:\\msys64\\usr\\bin\\bash.exe -lc ./{}\n".format(file_name))
+            files.append((file_name, "".join(lines)))
+            
         res.append(":{}_end\n".format(name))
         goto = None
         if name in thens:
@@ -390,8 +425,6 @@ def render_local_main(script: Script, opts: Opts, src_name, echo_off=True, warni
     
     if opts.need_curl_var:
         head += expand_macros(name, ['CURL = find_app(C:\\Windows\\System32\\curl.exe, C:\\Program Files\\Git\\mingw64\\bin\\curl.exe, C:\\Program Files\\Git\\mingw32\\bin\\curl.exe)\n'], opts)
-
-    files = []
 
     res = head + res
 
@@ -1279,13 +1312,19 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
     write(dst_bat, text)
     dst_paths.append(dst_bat)
 
+    base = os.path.dirname(dst_bat)
+    for name, cont in files:
+        path = os.path.join(base, name)
+        with open(path, 'w', encoding='utf-8') as f:
+            print(cont, file=f)
+        dst_paths.append(path)
+
     if opts.github_workflow:
         script = parse_script(src, github=True)
-        opts = script._opts
+        opts: Opts = script._opts
         steps1 = []
         steps2 = []
         steps3 = []
-        opts = script._opts
         githubdata = GithubData()
         keys, thens_ = script.compute_order()
         for name in keys:
@@ -1295,7 +1334,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
             github_check_cd(text)
             if text == '':
                 continue
-            shell = 'cmd'
+            shell = function._shell
+            if shell is None:
+                shell = 'cmd'
             condition = None
             step = GithubShellStep(text, shell, name, condition)
             steps2.append(make_github_step(step, opts, githubdata))
