@@ -35,6 +35,10 @@ class GithubSetupJava:
     java_version: int = None
 
 @dataclass
+class GithubSetupPython:
+    version: str = None
+
+@dataclass
 class GithubSetupMsys2:
     msystem: str = None
     install: str = None
@@ -74,6 +78,7 @@ class GithubData:
     setup_msys2: GithubSetupMsys2 = None
     setup_node: GithubSetupNode = None
     setup_java: GithubSetupJava = None
+    setup_python: GithubSetupPython = None
     steps: list = field(default_factory=list)
     cache: list[GithubCacheStep] = field(default_factory=list)
 
@@ -213,6 +218,16 @@ def make_setup_java_step(data: GithubSetupJava):
         "with": {
             "distribution": data.distribution,
             "java-version": data.java_version
+        }
+    }
+    return obj
+
+def make_setup_python_step(data: GithubSetupPython):
+    obj = {
+        "name": "setup java",
+        "uses": "actions/setup-python@v5",
+        "with": {
+            "python-version": data.version
         }
     }
     return obj
@@ -590,15 +605,8 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
 
     test = kwarg_value(kwargs, 'test', 't')
 
-    if opts.env_policy and not ctx.github:
-        curl = '"%CURL%"'
-        opts.need_curl_var = True
-    else:
-        curl = "curl"
-        if not ctx.github:
-            #opts.env_path.append('C:\\Program Files\\Git\\mingw64\\bin')
-            #opts.env_path.append('C:\\Program Files\\Git\\mingw32\\bin')
-            opts.env_path.append('C:\\Windows\\System32')
+    curl = "curl"
+    opts.env_path.append('C:\\Windows\\System32')
     
     user_agent = ""
     if opts.curl_user_agent is not None:
@@ -1010,6 +1018,12 @@ def macro_github_setup_java(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githu
     githubdata.setup_java = GithubSetupJava(distribution, java_version)
     return '\n'
 
+def macro_github_setup_python(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    validate_args("setup_python", args, kwargs, ret, 1, 1, {})
+    version = args[0]
+    githubdata.setup_python = GithubSetupPython(version)
+    return '\n'
+
 def macro_pushd_cd(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if ctx.github:
         return 'pushd %GITHUB_WORKSPACE%\n'
@@ -1353,6 +1367,9 @@ def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, 
 
         if githubdata.setup_java:
             steps1.append(make_setup_java_step(githubdata.setup_java))
+
+        if githubdata.setup_python:
+            steps1.append(make_setup_python_step(githubdata.setup_python))
 
         for item in githubdata.cache:
             steps1.append(make_cache_step(item))
