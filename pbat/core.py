@@ -1207,6 +1207,9 @@ def maybe_macro(line):
         return False
     for n in MACRO_NAMES + DEPRECATED_MACRO_NAMES:
         if n in line:
+            line_ = line.strip()
+            if line_.startswith('::') or line_.startswith('#'):
+                return False
             return True
     return False
     
