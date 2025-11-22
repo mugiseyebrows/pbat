@@ -2,10 +2,7 @@ import os
 import argparse
 import glob
 
-try:
-    from .core import read_compile_write, get_dst_bat, get_dst_workflow
-except ImportError:
-    from core import read_compile_write, get_dst_bat, get_dst_workflow
+from .core import read_compile_write, get_dst_bat, get_dst_workflow
 
 def find_pbats(path):
     paths = []
@@ -76,7 +73,7 @@ def main():
             if os.environ.get('DEBUG_PBAT') == '1':
                 raise e
             else:
-                print(e)
+                print("Exception", e, src)
 
 if __name__ == "__main__":
     main()

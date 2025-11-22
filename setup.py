@@ -13,10 +13,7 @@ setup(
     description = 'Batch file preprocessor',
     long_description = long_description,
     long_description_content_type = 'text/markdown',
-    install_requires = ['lark','pyyaml'],
-    package_data = {
-        'pbat': ['*.lark']
-    },
+    install_requires = ['pyyaml'],
     entry_points = {
         'console_scripts': [
             'pbat = pbat.compile:main'

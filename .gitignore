@@ -2,5 +2,4 @@ __pycache__/
 dist/
 build/
 pbat.egg-info/
-aqtinstall.log
 .vscode/

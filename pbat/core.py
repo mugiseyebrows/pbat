@@ -9,14 +9,10 @@ import hashlib
 
 # todo shell python bash pwsh
 
-try:
-    from .parsemacro import parse_macro, ParseMacroError
-    from .Opts import Opts, copy_opts
-    from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
-except ImportError:
-    from parsemacro import parse_macro, ParseMacroError
-    from Opts import Opts, copy_opts
-    from parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
+
+from .parsemacro import parse_macro, ParseMacroError
+from .Opts import Opts, copy_opts
+from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
 
 WARNING = 'This file is generated from {}, all edits will be lost'
 
@@ -920,8 +916,7 @@ def macro_call_vcvars(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata:
 
 def macro_if_exist_return(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
     if len(args) < 1:
-        print("macro if_exist_return requires an argument")
-        return ''
+        raise ValueError("macro if_exist_return requires an argument")
     return 'if exist {} goto {}_end'.format(quoted(args[0]), name)
 
 def macro_where(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):

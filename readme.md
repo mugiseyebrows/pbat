@@ -112,7 +112,7 @@ def main
 ```shell
 @echo off
 rem This file is generated from macros1.pbat, all edits will be lost
-set PATH=C:\Program Files\CMake\bin;C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\mingw32\bin;C:\Windows\System32;C:\Program Files\7-Zip;C:\Program Files\Git\usr\bin;%PATH%
+set PATH=C:\Program Files\CMake\bin;C:\Windows\System32;C:\Program Files\7-Zip;C:\Program Files\Git\usr\bin;%PATH%
 :: download
 curl -L -o foo.zip http://example.com/foo.zip
 :: download unless exists
@@ -281,25 +281,21 @@ def main
     where patch
     where rm
     where bash
-    return()
     download(http://example.com/foo.zip)
     patch(test)
-
 ```
 
 #### env_policy1.bat (generated)
 ```shell
 @echo off
 rem This file is generated from env_policy1.pbat, all edits will be lost
-set PATH=C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\mingw32\bin;C:\Windows\System32;C:\Program Files\Git\usr\bin;C:\Windows
+set PATH=C:\Windows\System32;C:\Program Files\Git\usr\bin;C:\Windows
 where curl
 where patch
 where rm
 where bash
-goto main_end
 curl -L -o foo.zip http://example.com/foo.zip
 patch -i test
-:main_end
 ```
 
 
@@ -311,7 +307,6 @@ def main
     where patch
     where rm
     where bash
-    return()
     download(http://example.com/foo.zip)
     patch(test)
 
@@ -322,29 +317,19 @@ env-policy 1
 ```shell
 @echo off
 rem This file is generated from env_policy2.pbat, all edits will be lost
-set PATH=C:\Windows;C:\Windows\System32
+set PATH=C:\Windows\System32;C:\Windows
 if exist "C:\Program Files\Git\usr\bin\patch.exe" set PATCH=C:\Program Files\Git\usr\bin\patch.exe
 if not defined PATCH (
 echo PATCH not found
-exit /b
-)
-if exist "C:\Program Files\Git\mingw32\bin\curl.exe" set CURL=C:\Program Files\Git\mingw32\bin\curl.exe
-if exist "C:\Program Files\Git\mingw64\bin\curl.exe" set CURL=C:\Program Files\Git\mingw64\bin\curl.exe
-if exist "C:\Windows\System32\curl.exe" set CURL=C:\Windows\System32\curl.exe
-if not defined CURL (
-echo CURL not found
 exit /b
 )
 where curl
 where patch
 where rm
 where bash
-goto main_end
-"%CURL%" -L -o foo.zip http://example.com/foo.zip
+curl -L -o foo.zip http://example.com/foo.zip
 "%PATCH%" -i test
-:main_end
 ```
-
 
 # Notes
 

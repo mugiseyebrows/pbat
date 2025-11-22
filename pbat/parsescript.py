@@ -1,5 +1,6 @@
 import re
 import os
+import sys
 
 ON_PUSH = 1
 ON_TAG = 2
@@ -32,12 +33,10 @@ DEPRECATED_MACRO_NAMES = [
     'github_rmdir', 'rm', 'move_file', 'copy_file', 'copy_dir', 'untar', 'clean_dir', 'clean_file'
 ]
 
-try:
-    from .parsedef import parse_def, DEF_RX
-    from .Opts import Opts
-except ImportError:
-    from parsedef import parse_def, DEF_RX
-    from Opts import Opts
+DEF_RX = re.compile('\\s*def\\s+([0-9a-z_]+)', re.IGNORECASE)
+
+from .parsedef import parse_def
+from .Opts import Opts
 
 def pat_spacejoin(*pat):
     SPACE = "\\s*"
@@ -195,7 +194,7 @@ class Script:
                 break
         for n in self._functions.keys():
             if n not in keys:
-                print("warning: not reachable {}".format(n))
+                print("warning: not reachable {}".format(n), file=sys.stderr)
         return keys, thens_
 
 def load_lines(path):
