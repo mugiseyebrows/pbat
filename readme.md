@@ -83,6 +83,8 @@ Macro expression consists of name and comma-separated arguments enclosed in pare
 
 `git_clone(url, [:ref=tag], [:pull])` clones git repo.
 
+`APP = find_app(...paths)` find existing path and assign to APP variable
+
 #### macros1.pbat (source)
 ```
 def main
@@ -268,67 +270,52 @@ echo dep1
 echo main
 ```
 
-
 # PATH pollution
 
-Some applications change their behaviour depending on `rm`, `bash`, `sed`, etc availability in PATH (`qmake` for example generates completely different makefiles, although they work as well, it makes me uneasy), to avoid poluting PATH when `download` or `patch` is used, you can use `env-policy 1` to use `%PATCH%` and `%CURL%` env variables containing full path to this utilities.
+Some applications (`qmake`) behave differentrly depending on `sh` availability in PATH. 
+
+If you need to use patch but dont want to polute PATH, you can use `env-policy 1`.
+
+#### env_policy0.pbat (source)
+```
+def main
+    unzip(foo.zip)
+    cd foo
+    patch(../patch.txt, :p1)
+```
+
+#### env_policy0.bat (generated)
+```shell
+@echo off
+rem This file is generated from env_policy0.pbat, all edits will be lost
+set PATH=C:\Program Files\7-Zip;C:\Program Files\Git\usr\bin;%PATH%
+7z x -y foo.zip
+cd foo
+patch -p1 -i ../patch.txt
+```
 
 #### env_policy1.pbat (source)
 ```
 def main
-    clear_path()
-    where curl
-    where patch
-    where rm
-    where bash
-    download(http://example.com/foo.zip)
-    patch(test)
+    unzip(foo.zip)
+    cd foo
+    patch(../patch.txt, :p1)
+env-policy 1
 ```
 
 #### env_policy1.bat (generated)
 ```shell
 @echo off
 rem This file is generated from env_policy1.pbat, all edits will be lost
-set PATH=C:\Windows\System32;C:\Program Files\Git\usr\bin;C:\Windows
-where curl
-where patch
-where rm
-where bash
-curl -L -o foo.zip http://example.com/foo.zip
-patch -i test
-```
-
-
-#### env_policy2.pbat (source)
-```
-def main
-    clear_path()
-    where curl
-    where patch
-    where rm
-    where bash
-    download(http://example.com/foo.zip)
-    patch(test)
-
-env-policy 1
-```
-
-#### env_policy2.bat (generated)
-```shell
-@echo off
-rem This file is generated from env_policy2.pbat, all edits will be lost
-set PATH=C:\Windows\System32;C:\Windows
+set PATH=C:\Program Files\7-Zip;%PATH%
 if exist "C:\Program Files\Git\usr\bin\patch.exe" set PATCH=C:\Program Files\Git\usr\bin\patch.exe
 if not defined PATCH (
 echo PATCH not found
 exit /b
 )
-where curl
-where patch
-where rm
-where bash
-curl -L -o foo.zip http://example.com/foo.zip
-"%PATCH%" -i test
+7z x -y foo.zip
+cd foo
+"%PATCH%" -p1 -i ../patch.txt
 ```
 
 # Notes
