@@ -6,13 +6,13 @@ import textwrap
 import yaml
 from collections import defaultdict
 import hashlib
+from jinja2 import Environment, FileSystemLoader, FunctionLoader
 
 # todo shell python bash pwsh
 
-
 from .parsemacro import parse_macro, ParseMacroError
 from .Opts import Opts, copy_opts
-from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function
+from .parsescript import parse_script, ON_PUSH, ON_TAG, ON_RELEASE, MACRO_NAMES, DEPRECATED_MACRO_NAMES, Script, Function, read_and_include
 
 WARNING = 'This file is generated from {}, all edits will be lost'
 
@@ -1101,6 +1101,18 @@ def macro_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Git
     
     raise ValueError("install({}) not implemented".format(app))
 
+def macro_pip_install(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
+    if len(args) != 1:
+        raise ValueError(f"pip_install requires one argument got {len(args)}: {args}")
+    pkg_name = args[0]
+    mod_name = kwarg_value(kwargs, "m", "module")
+    if mod_name is None:
+        if pkg_name == 'beautifulsoup4':
+            mod_name = "bs4"
+        else:
+            mod_name = pkg_name
+    return f'python -c "import {mod_name}" || python -m pip install "{pkg_name}"\n'
+
 def parse_python_ver(ver: str):
     m = re.match('([23])[.]?([0-9]+)', ver)
     if m:
@@ -1307,83 +1319,124 @@ def github_check_cd(text):
     if problem in text:
         raise Exception("{} does not work on github actions use %CD%".format(problem))
 
-def read_compile_write(src, dst_bat, dst_workflow, verbose=True, echo_off=True, warning=True):
+def replace_ext(path, ext):
+    return os.path.splitext(path)[0] + ext
 
-    if isinstance(src, str):
-        src_name = os.path.basename(src)
-    else:
-        src_name = 'untitled'
+def parse_outputs(src):
+    lines = read_and_include(src)
+    rx = re.compile('\\s*output\\s*\\(.*\\)')
+    outputs = []
+    for i, line in enumerate(lines):
+        if rx.match(line):
+            retname, fnname, posargs, kwargs = parse_macro(line)
+            if len(posargs) != 1:
+                raise ValueError()
+            else:
+                output_name = posargs[0]
+                outputs.append((output_name, kwargs))
+            lines[i] = '\n'
+    if len(outputs) == 0:
+        output_name = os.path.splitext(os.path.basename(src))[0]
+        outputs.append((output_name, dict()))
+    return outputs, lines
 
+
+
+
+def read_compile_write(src, verbose=True, echo_off=True, warning=True):
+
+    outputs, lines = parse_outputs(src)
+
+    src_name = os.path.basename(src)
+    
     dst_paths = []
 
-    # local
-    script = parse_script(src, github=False)
-    opts = script._opts
-    text, files = render_local_main(script, opts, src_name, echo_off, warning)
-    text = dedent(text)
-    write(dst_bat, text)
-    dst_paths.append(dst_bat)
+    def load_template(name):
+        if name == 'main':
+            return ''.join(lines)
+    
+    env = Environment(
+        loader=FunctionLoader(load_template),
+        extensions = [],
+        keep_trailing_newline=True,
+    )
 
-    base = os.path.dirname(dst_bat)
-    for name, cont in files:
-        path = os.path.join(base, name)
-        with open(path, 'w', encoding='utf-8') as f:
-            print(cont, file=f)
-        dst_paths.append(path)
+    for output in outputs:
+        output_name, data = output
+        rendered = env.get_template('main').render(data)
+        
+        script = parse_script(rendered, github=False)
 
-    if opts.github_workflow:
-        script = parse_script(src, github=True)
-        opts: Opts = script._opts
-        steps1 = []
-        steps2 = []
-        steps3 = []
-        githubdata = GithubData()
-        keys, thens_ = script.compute_order()
-        for name in keys:
-            function = script.function(name)
-            text = filter_empty_lines(render_function(function, opts, githubdata))
-            text = dedent(text)
-            github_check_cd(text)
-            if text == '':
-                continue
-            shell = function._shell
-            if shell is None:
-                shell = 'cmd'
-            condition = None
-            step = GithubShellStep(text, shell, name, condition)
-            steps2.append(make_github_step(step, opts, githubdata))
+        dirname = os.path.dirname(src)
+        dst_bat = os.path.join(dirname, replace_ext(output_name, '.bat'))
+        dst_workflow = os.path.join(dirname, ".github", "workflows", replace_ext(output_name, '.yml'))
 
-        # pre steps
-        if githubdata.checkout:
-            steps1.append(make_checkout_step())
+        opts = script._opts
+        text, files = render_local_main(script, opts, src_name, echo_off, warning)
+        text = dedent(text)
+        write(dst_bat, text)
+        dst_paths.append(dst_bat)
 
-        if githubdata.setup_msys2:
-            steps1.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
+        base = os.path.dirname(dst_bat)
+        for name, cont in files:
+            path = os.path.join(base, name)
+            with open(path, 'w', encoding='utf-8') as f:
+                print(cont, file=f)
+            dst_paths.append(path)
 
-        if githubdata.setup_node:
-            steps1.append(make_setup_node_step(githubdata.setup_node))
+        if opts.github_workflow:
+            script = parse_script(rendered, github=True)
+            opts: Opts = script._opts
+            steps1 = []
+            steps2 = []
+            steps3 = []
+            githubdata = GithubData()
+            keys, thens_ = script.compute_order()
+            for name in keys:
+                function = script.function(name)
+                text = filter_empty_lines(render_function(function, opts, githubdata))
+                text = dedent(text)
+                github_check_cd(text)
+                if text == '':
+                    continue
+                shell = function._shell
+                if shell is None:
+                    shell = 'cmd'
+                condition = None
+                step = GithubShellStep(text, shell, name, condition)
+                steps2.append(make_github_step(step, opts, githubdata))
 
-        if githubdata.setup_java:
-            steps1.append(make_setup_java_step(githubdata.setup_java))
+            # pre steps
+            if githubdata.checkout:
+                steps1.append(make_checkout_step())
 
-        if githubdata.setup_python:
-            steps1.append(make_setup_python_step(githubdata.setup_python))
+            if githubdata.setup_msys2:
+                steps1.append(make_setup_msys2_step(githubdata.setup_msys2, opts))
 
-        for item in githubdata.cache:
-            steps1.append(make_cache_step(item))
+            if githubdata.setup_node:
+                steps1.append(make_setup_node_step(githubdata.setup_node))
 
-        # post steps
+            if githubdata.setup_java:
+                steps1.append(make_setup_java_step(githubdata.setup_java))
 
-        for item in githubdata.upload:
-            steps3.append(make_upload_step(item))
+            if githubdata.setup_python:
+                steps1.append(make_setup_python_step(githubdata.setup_python))
 
-        if len(githubdata.release) > 0:
-            steps3.append(make_release_step(githubdata.release))
+            for item in githubdata.cache:
+                steps1.append(make_cache_step(item))
 
-        steps = steps1 + steps2 + steps3
+            # post steps
 
-        save_workflow(dst_workflow, steps, script._opts, githubdata)
-        dst_paths.append(dst_workflow)
+            for item in githubdata.upload:
+                steps3.append(make_upload_step(item))
+
+            if len(githubdata.release) > 0:
+                steps3.append(make_release_step(githubdata.release))
+
+            steps = steps1 + steps2 + steps3
+
+            save_workflow(dst_workflow, steps, script._opts, githubdata)
+            dst_paths.append(dst_workflow)
 
 
     if verbose and isinstance(src, str) and isinstance(dst_bat, str):

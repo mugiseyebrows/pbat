@@ -24,7 +24,7 @@ MACRO_NAMES = [
     'set_var',
     'substr', 
     'use_tool', 'install_tool', 'call_vcvars',
-    'use', 'install', 'add_path',
+    'use', 'install', 'pip_install', 'add_path',
     'if_exist_return', 'clear_path',
     'test_exist', 'return', 'assert'
 ]
@@ -221,8 +221,8 @@ def insert_includes(dirname, lines, included: set[str]):
             res.append(line)
     return res, changed
 
-def parse_script(src, github) -> Script:
-    # todo includes
+
+def read_and_include(src):
     dirname = os.path.dirname(src)
     lines = load_lines(src)
     included = set()
@@ -244,6 +244,10 @@ def parse_script(src, github) -> Script:
     if not has_def:
         lines = ['def main\n'] + lines
 
+    return lines
+
+def parse_script(text, github) -> Script:
+    lines = [line + '\n' for line in text.split('\n')]
     script = Script()
     for i, line in enumerate(lines):
         script.append(i, line)

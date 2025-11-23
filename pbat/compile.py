@@ -57,18 +57,9 @@ def main():
     """
 
     for src in paths:
-        if False:
-            pass
-        else:
-            dst_bat = get_dst_bat(src)
-            dst_workflow = get_dst_workflow(src)
-        if src == dst_bat:
-            print("src == dst", src)
-            exit(1)
-
         try:
             #print(src, dst_bat, dst_workflow)
-            read_compile_write(src, dst_bat, dst_workflow)
+            read_compile_write(src)
         except Exception as e:
             if os.environ.get('DEBUG_PBAT') == '1':
                 raise e
