@@ -1322,6 +1322,12 @@ def github_check_cd(text):
 def replace_ext(path, ext):
     return os.path.splitext(path)[0] + ext
 
+def replace_ext1(path, exts, ext):
+    path_, old_ext = os.path.splitext(path)
+    if old_ext in exts:
+        return path_ + ext
+    return path + ext 
+
 def parse_outputs(src):
     lines = read_and_include(src)
     rx = re.compile('\\s*output\\s*\\(.*\\)')
@@ -1368,8 +1374,8 @@ def read_compile_write(src, verbose=True, echo_off=True, warning=True):
         script = parse_script(rendered, github=False)
 
         dirname = os.path.dirname(src)
-        dst_bat = os.path.join(dirname, replace_ext(output_name, '.bat'))
-        dst_workflow = os.path.join(dirname, ".github", "workflows", replace_ext(output_name, '.yml'))
+        dst_bat = os.path.join(dirname, replace_ext1(output_name, ['.bat', '.yml'], '.bat'))
+        dst_workflow = os.path.join(dirname, ".github", "workflows", replace_ext1(output_name, ['.bat', '.yml'], '.yml'))
 
         opts = script._opts
         text, files = render_local_main(script, opts, src_name, echo_off, warning)
