@@ -199,7 +199,10 @@ class Script:
 
 def load_lines(path):
     with open(path, encoding='utf-8') as f:
-        return list(f)
+        lines = list(f)
+    if not lines[-1].endswith("\n"):
+        lines[-1] = lines[-1] + "\n"
+    return lines
 
 def insert_includes(dirname, lines, included: set[str]):
     res = []
