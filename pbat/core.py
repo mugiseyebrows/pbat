@@ -612,9 +612,13 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
             'chrome': 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36'
         }[opts.curl_user_agent] + '"'
 
-    proxy = ''
+    proxy = []
+    
+    if opts.curl_proxy_auth is not None:
+        proxy.extend(['-U', opts.curl_proxy_auth])
+
     if opts.curl_proxy is not None:
-        proxy = '-x {}'.format(opts.curl_proxy)
+        proxy.extend(['-x', opts.curl_proxy])
 
     #print("user_agent", user_agent)
 
@@ -630,7 +634,7 @@ def macro_download(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Gi
         insecure = ''
 
     if is_curl:
-        cmd = spacejoin_nonempty(curl, '-L', proxy, user_agent, insecure, '-o', quoted(dest), quoted(url)) + "\n"
+        cmd = spacejoin_nonempty(curl, '-L', *proxy, user_agent, insecure, '-o', quoted(dest), quoted(url)) + "\n"
     elif is_wget:
         wget = "C:\\msys64\\usr\\bin\\wget.exe"
         cmd = " ".join([wget, '-O', quoted(dest), quoted(url)]) + "\n"
@@ -1346,7 +1350,8 @@ def parse_outputs(src):
         outputs.append((output_name, dict()))
     return outputs, lines
 
-
+def filter_basename(path):
+    return os.path.basename(path)
 
 
 def read_compile_write(src, verbose=True, echo_off=True, warning=True):
@@ -1366,6 +1371,8 @@ def read_compile_write(src, verbose=True, echo_off=True, warning=True):
         extensions = [],
         keep_trailing_newline=True,
     )
+
+    env.filters.update(basename = filter_basename)
 
     for output in outputs:
         output_name, data = output

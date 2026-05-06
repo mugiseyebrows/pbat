@@ -12,6 +12,7 @@ class Opts:
     clean: bool = False
     curl_user_agent: str = None
     curl_proxy: str = None
+    curl_proxy_auth: str = None
     download_test: bool = True
     unzip_test: bool = True
     zip_test: bool = True
