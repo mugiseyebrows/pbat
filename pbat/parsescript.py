@@ -85,31 +85,20 @@ def parse_statement(line, opts: Opts) -> bool:
         }[trigger]
         return True
 
-    m = re.match('^\\s*curl[_-]user[_-]agent\\s+(safari|chrome|mozilla)', line)
-
-    if m is None:
-        m = re.match('^\\s*user[_-]agent\\s+(safari|chrome|mozilla)', line)
-
-    if m is not None:
+    m = re.match('^\\s*(?:curl[_-])?user[_-]agent\\s+(safari|chrome|mozilla)', line)
+    if m:
         opts.curl_user_agent = m.group(1)
         return True
     
-    m = re.match('^\\s*curl[_-]proxy\\s+(.*)', line)
-
-    if m is None:
-        m = re.match('^\\s*proxy\\s+(.*)', line)
-
-    if m is not None:
+    m = re.match('^\\s*(?:curl[_-])?proxy\\s+(.*)', line)
+    if m:
         opts.curl_proxy = m.group(1).rstrip()
         return True
     
-    m = re.match('^\\s*curl[_-]proxy[_-]auth\\s+(.*)', line)
-
-    if m is None:
-        m = re.match('^\\s*proxy[_-]auth\\s+(.*)', line)
-
-    if m is not None:
+    m = re.match('^\\s*(?:curl[_-])?proxy[_-]auth\\s+(.*)', line)
+    if m:
         opts.curl_proxy_auth = m.group(1).rstrip()
+        return True
     
     m = re.match('^\\s*workflow[_-]name (.*)', line)
     if m:
