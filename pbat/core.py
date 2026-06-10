@@ -677,7 +677,7 @@ def use_ninja(ctx, opts):
 
 def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: GithubData):
 
-    use_7z(ctx, opts)
+    
     src = args[0]
 
     if len(args) == 2:
@@ -686,13 +686,20 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
     test = kwarg_value(kwargs, 'test', 't')
     output = kwarg_value(kwargs, 'output', 'o')
 
-    cmd = ['7z']
+    ext = os.path.splitext(src)[1]
 
-    cmd = cmd + ['x', '-y']
-    if output:
-        cmd.append("-o{}".format(quoted(output)))
+    if ext in ['.gz', '.tar', '.bz2']:
+        use_cmake(ctx, opts)
+        cmd = ['cmake -E tar xf']
+        if output:
+            raise ValueError(f"cannot specify output for ext {ext}")
+    else:
+        use_7z(ctx, opts)
+        cmd = ['7z x -y']
+        if output:
+            cmd.append("-o{}".format(quoted(output)))
+
     cmd.append(quoted(src))
-
     for arg in args[1:]:
         cmd.append(quoted(arg))
 
