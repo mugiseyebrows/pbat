@@ -688,7 +688,7 @@ def macro_unzip(name, args, kwargs, ret, opts: Opts, ctx: Ctx, githubdata: Githu
 
     ext = os.path.splitext(src)[1]
 
-    if ext in ['.gz', '.tar', '.bz2']:
+    if ext in ['.gz', '.tar', '.bz2', '.xz']:
         use_cmake(ctx, opts)
         cmd = ['cmake -E tar xf']
         if output:
